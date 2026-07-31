@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "GOAL'D IN",
+    "slug": "goaldin",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "goaldin",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mygoaldin.app"
+    },
+    "android": {
+      "package": "com.mygoaldin.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#090909"
+      }
+    },
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
