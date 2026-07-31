@@ -12,9 +12,9 @@ export type Action = {
   goal_id: string;
   user_id: string;
   title: string;
-  status: 'todo' | 'done' | 'skipped';
-  estimate_minutes: number | null;
-  sort_order: number;
+  status: 'pending' | 'completed' | 'skipped';
+  estimated_minutes: number | null;
+  position: number;
   completed_at: string | null;
 };
 

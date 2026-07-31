@@ -8,8 +8,8 @@ create table if not exists public.goals (
 create table if not exists public.actions (
   id uuid primary key default gen_random_uuid(), goal_id uuid not null references public.goals(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade, title text not null,
-  status text not null default 'todo' check (status in ('todo','done','skipped')),
-  estimate_minutes int, sort_order int not null default 0, completed_at timestamptz, created_at timestamptz not null default now()
+  status text not null default 'pending' check (status in ('pending','completed','skipped')),
+  estimated_minutes int, position int not null default 0, completed_at timestamptz, created_at timestamptz not null default now()
 );
 create table if not exists public.wins (
   id uuid primary key default gen_random_uuid(), user_id uuid not null references auth.users(id) on delete cascade,
