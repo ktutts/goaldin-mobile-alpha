@@ -20,7 +20,18 @@ create table if not exists public.events (
   event_type text not null, object_id text, metadata jsonb not null default '{}'::jsonb, created_at timestamptz not null default now()
 );
 
-alter table public.goals enable row level security; alter table public.actions enable row level security; alter table public.wins enable row level security; alter table public.events enable row level security;
+create table if not exists public.capacities (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  date date not null,
+  level text not null check (level in ('high','medium','low')),
+  source text not null check (source in ('manual','automatic')),
+  metadata jsonb,
+  created_at timestamptz not null default now(),
+  unique (user_id, date)
+);
+
+alter table public.goals enable row level security; alter table public.actions enable row level security; alter table public.wins enable row level security; alter table public.events enable row level security; alter table public.capacities enable row level security;
 
 do $$ begin
   create policy "users own goals" on public.goals for all using (auth.uid()=user_id) with check (auth.uid()=user_id);
@@ -34,3 +45,118 @@ exception when duplicate_object then null; end $$;
 do $$ begin
   create policy "users own events" on public.events for all using (auth.uid()=user_id) with check (auth.uid()=user_id);
 exception when duplicate_object then null; end $$;
+do $$ begin
+  create policy "users own capacities" on public.capacities for all using (auth.uid()=user_id) with check (auth.uid()=user_id);
+exception when duplicate_object then null; end $$;
+create table if not exists public.capacities (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  date date not null,
+  level text not null check (level in ('high', 'medium', 'low')),
+  source text not null default 'manual'
+    check (source in ('manual', 'automatic')),
+  metadata jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  unique (user_id, date)
+);
+alter table public.capacities enable row level security;
+create policy "Users can read own capacities"
+on public.capacities
+for select
+using (auth.uid() = user_id);
+
+create policy "Users can insert own capacities"
+on public.capacities
+for insert
+with check (auth.uid() = user_id);
+
+create policy "Users can update own capacities"
+on public.capacities
+for update
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create policy "Users can delete own capacities"
+on public.capacities
+for delete
+using (auth.uid() = user_id);
+-- =========================================================
+-- MILESTONES
+-- A goal is divided into ordered, weighted milestones.
+-- Moves/actions live inside milestones.
+-- =========================================================
+
+create table if not exists public.milestones (
+  id uuid primary key default gen_random_uuid(),
+
+  goal_id uuid not null
+    references public.goals(id)
+    on delete cascade,
+
+  user_id uuid not null
+    references auth.users(id)
+    on delete cascade,
+
+  title text not null,
+
+  description text,
+
+  -- Contribution toward total goal completion.
+  -- Example: 10 + 25 + 15 + ... = 100
+  weight int not null default 0
+    check (weight >= 0 and weight <= 100),
+
+  position int not null default 0,
+
+  status text not null default 'pending'
+    check (status in ('pending', 'active', 'completed')),
+
+  completed_at timestamptz,
+
+  created_at timestamptz not null default now()
+);
+alter table public.actions
+add column if not exists milestone_id uuid
+references public.milestones(id)
+on delete set null;
+
+alter table public.actions
+add column if not exists milestone_progress int
+check (
+  milestone_progress is null
+  or (
+    milestone_progress >= 0
+    and milestone_progress <= 100
+  )
+);
+create index if not exists milestones_goal_id_idx
+on public.milestones(goal_id);
+
+create index if not exists milestones_user_id_idx
+on public.milestones(user_id);
+
+create index if not exists actions_milestone_id_idx
+on public.actions(milestone_id);
+alter table public.milestones enable row level security;
+create policy "Users can read own milestones"
+on public.milestones
+for select
+using (auth.uid() = user_id);
+
+create policy "Users can insert own milestones"
+on public.milestones
+for insert
+with check (auth.uid() = user_id);
+
+create policy "Users can update own milestones"
+on public.milestones
+for update
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create policy "Users can delete own milestones"
+on public.milestones
+for delete
+using (auth.uid() = user_id);

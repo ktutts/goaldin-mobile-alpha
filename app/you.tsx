@@ -1,3 +1,126 @@
-import { useEffect, useState } from 'react'; import { Pressable, StyleSheet, Text, View } from 'react-native'; import { router } from 'expo-router'; import { supabase } from '@/lib/supabase';
-export default function You(){const[email,setEmail]=useState(''),[goalCount,setGoalCount]=useState(0),[winCount,setWinCount]=useState(0);useEffect(()=>{(async()=>{const{data:{user}}=await supabase.auth.getUser();if(!user)return;setEmail(user.email||'');const[g,w]=await Promise.all([supabase.from('goals').select('*',{count:'exact',head:true}).eq('user_id',user.id),supabase.from('wins').select('*',{count:'exact',head:true}).eq('user_id',user.id)]);setGoalCount(g.count||0);setWinCount(w.count||0)})()},[]);async function logout(){await supabase.auth.signOut();router.replace('/');}return <View style={s.page}><Text style={s.brand}>YOU</Text><Text style={s.h1}>{winCount} wins.</Text><Text style={s.copy}>{goalCount} goals created so far.</Text><View style={s.card}><Text style={s.label}>ACCOUNT</Text><Text style={s.value}>{email}</Text></View><View style={s.card}><Text style={s.label}>WHAT THIS BECOMES</Text><Text style={s.value}>Your accomplishment history, patterns, interests, streaks and the evidence of what you actually do.</Text></View><Pressable style={s.logout} onPress={logout}><Text style={s.logoutText}>SIGN OUT</Text></Pressable><Pressable onPress={()=>router.back()}><Text style={s.back}>← Back</Text></Pressable></View>}
-const s=StyleSheet.create({page:{flex:1,backgroundColor:'#090909',padding:22,paddingTop:60},brand:{color:'#D8B24A',fontWeight:'900',letterSpacing:3},h1:{color:'#fff',fontSize:42,fontWeight:'900',marginTop:10},copy:{color:'#999',marginBottom:20},card:{backgroundColor:'#171717',padding:18,borderRadius:16,marginBottom:12},label:{color:'#777',fontWeight:'900',letterSpacing:1.5,fontSize:11},value:{color:'#fff',fontSize:16,lineHeight:22,marginTop:6},logout:{borderWidth:1,borderColor:'#333',padding:15,borderRadius:14,alignItems:'center',marginTop:8},logoutText:{color:'#ddd',fontWeight:'900'},back:{color:'#999',marginTop:18}});
+import { useEffect, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { router } from 'expo-router';
+import { supabase } from '@/lib/supabase';
+
+export default function You() {
+  const [email, setEmail] = useState('');
+  const [goalCount, setGoalCount] = useState(0);
+  const [winCount, setWinCount] = useState(0);
+
+  useEffect(() => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      setEmail(user.email || '');
+
+      const [g, w] = await Promise.all([
+        supabase
+          .from('goals')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', user.id),
+        supabase
+          .from('wins')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', user.id),
+      ]);
+
+      setGoalCount(g.count || 0);
+      setWinCount(w.count || 0);
+    })();
+  }, []);
+
+  async function logout() {
+    await supabase.auth.signOut();
+    router.replace('/');
+  }
+
+  return (
+    <View style={s.page}>
+      <Text style={s.brand}>YOU</Text>
+      <Text style={s.h1}>{winCount} wins.</Text>
+      <Text style={s.copy}>{goalCount} goals created so far.</Text>
+
+      <View style={s.card}>
+        <Text style={s.label}>ACCOUNT</Text>
+        <Text style={s.value}>{email}</Text>
+      </View>
+
+      <View style={s.card}>
+        <Text style={s.label}>WHAT THIS BECOMES</Text>
+        <Text style={s.value}>
+          Your accomplishment history, patterns, interests, streaks and the evidence of what you actually do.
+        </Text>
+      </View>
+
+      <Pressable style={s.logout} onPress={logout}>
+        <Text style={s.logoutText}>SIGN OUT</Text>
+      </Pressable>
+
+      <Pressable onPress={() => router.back()}>
+        <Text style={s.back}>← Back</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const s = StyleSheet.create({
+  page: {
+    flex: 1,
+    backgroundColor: '#0B0B0D',
+    padding: 22,
+    paddingTop: 60,
+  },
+  brand: {
+    color: '#F0D06A',
+    fontWeight: '900',
+    letterSpacing: 3,
+  },
+  h1: {
+    color: '#E5E5E5',
+    fontSize: 42,
+    fontWeight: '600',
+    marginTop: 10,
+  },
+  copy: {
+    color: '#A9A9A9',
+    marginBottom: 20,
+  },
+  card: {
+    backgroundColor: '#121214',
+    padding: 18,
+    borderRadius: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  label: {
+    color: '#A9A9A9',
+    fontWeight: '900',
+    letterSpacing: 1.5,
+    fontSize: 11,
+  },
+  value: {
+    color: '#E5E5E5',
+    fontSize: 16,
+    lineHeight: 22,
+    marginTop: 6,
+  },
+  logout: {
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    padding: 15,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  logoutText: {
+    color: '#E5E5E5',
+    fontWeight: '900',
+  },
+  back: {
+    color: '#A9A9A9',
+    marginTop: 18,
+  },
+});

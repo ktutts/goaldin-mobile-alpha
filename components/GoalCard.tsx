@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { Goal, Action } from '@/types/models';
-
+import CircularProgress from './CircularProgress';
 export default function GoalCard({ goal, actions, onDone }: { goal: Goal; actions: Action[]; onDone: (a: Action) => void }) {
   const completed = actions.filter((a) => a.status === 'completed').length;
   const total = actions.length || 1;
@@ -11,10 +11,17 @@ export default function GoalCard({ goal, actions, onDone }: { goal: Goal; action
   return (
     <View style={s.card}>
       <Pressable onPress={() => router.push(`/goal/${goal.id}`)}>
-        <View style={s.row}>
-          <Text style={s.title}>{goal.title}</Text>
-          <Text style={s.progress}>{progress}%</Text>
-        </View>
+  <View style={s.row}>
+  <Text style={s.title} numberOfLines={2}>
+    {goal.title}
+  </Text>
+
+  <CircularProgress
+    progress={progress}
+    size={64}
+    strokeWidth={6}
+  />
+</View>
         <View style={s.track}>
           <View style={[s.fill, { width: `${progress}%` }]} />
         </View>

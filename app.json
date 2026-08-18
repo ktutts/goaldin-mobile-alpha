@@ -1,12 +1,13 @@
 {
   "expo": {
     "name": "GOAL'D IN",
-    "slug": "goaldin",
+    "slug": "ktutts",
     "version": "0.1.0",
     "orientation": "portrait",
     "scheme": "goaldin",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
+    "icon": "./assets/images/goaldin-icon.png",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.mygoaldin.app"
@@ -14,12 +15,23 @@
     "android": {
       "package": "com.mygoaldin.app",
       "adaptiveIcon": {
+        "foregroundImage": "./assets/images/goaldin-icon.png",
         "backgroundColor": "#090909"
       }
     },
-    "plugins": ["expo-router"],
+    "plugins": [
+      "expo-router",
+      "expo-font"
+    ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "c83115ce-eee9-4a35-a849-9d9b6b9d3f8c"
+      }
+    },
+    "owner": "ktutts-team"
   }
 }
