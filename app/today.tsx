@@ -34,7 +34,26 @@ export default function Today() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+const [nextMoveStep, setNextMoveStep] = useState(0);
+const nextMoves = [
+  {
+    title: 'Start Strong',
+    description: 'Take 10 minutes to move, hydrate, and get focused.',
+    button: "I'M ON IT",
+  },
+  {
+    title: 'Attack Your #1 Goal',
+    description: 'Give your most important goal 25 minutes of focused work.',
+    button: 'START',
+  },
+  {
+    title: 'Midday Reset',
+    description: 'Refuel, reset, and decide what matters most this afternoon.',
+    button: "LET'S GO",
+  },
+];
 
+const nextMove = nextMoves[nextMoveStep % nextMoves.length];
   const loadCapacity = useCallback(async () => {
     const current = await getCapacityForDate();
     setCapacity(current);
@@ -240,7 +259,74 @@ const chooseCapacity = useCallback(
 <View style={s.capacityRow}>
 
 </View>
+{/* NEXT MOVE */}
+<View
+  style={{
+    marginTop: 18,
+    borderWidth: 1,
+    borderColor: GOLD,
+    backgroundColor: '#121212',
+    borderRadius: 22,
+    padding: 20,
+  }}
+>
+  <Text
+    style={{
+      color: GOLD,
+      fontSize: 12,
+      fontWeight: '800',
+      letterSpacing: 2,
+      marginBottom: 10,
+    }}
+  >
+    NEXT MOVE
+  </Text>
 
+  <Text
+    style={{
+      color: '#FFFFFF',
+      fontSize: 22,
+      fontWeight: '800',
+      marginBottom: 8,
+    }}
+  >
+    {nextMove.title}
+  </Text>
+
+  <Text
+    style={{
+      color: '#B8B8B8',
+      fontSize: 15,
+      lineHeight: 22,
+      marginBottom: 18,
+    }}
+  >
+    {nextMove.description}
+  </Text>
+
+  <Pressable
+    onPress={() =>
+      setNextMoveStep((current) => current + 1)
+    }
+    style={{
+      backgroundColor: GOLD,
+      borderRadius: 16,
+      paddingVertical: 14,
+      alignItems: 'center',
+    }}
+  >
+    <Text
+      style={{
+        color: '#080808',
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 1,
+      }}
+    >
+      {nextMove.button}
+    </Text>
+  </Pressable>
+</View>
 <Pressable
   onPress={() => router.push('/nutrition-plan-v2' as any)}
   style={{
