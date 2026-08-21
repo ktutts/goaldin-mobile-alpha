@@ -35,25 +35,30 @@ export default function Today() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 const [nextMoveStep, setNextMoveStep] = useState(0);
-const nextMoves = [
-  {
-    title: 'Start Strong',
-    description: 'Take 10 minutes to move, hydrate, and get focused.',
-    button: "I'M ON IT",
-  },
-  {
-    title: 'Attack Your #1 Goal',
-    description: 'Give your most important goal 25 minutes of focused work.',
-    button: 'START',
-  },
-  {
-    title: 'Midday Reset',
-    description: 'Refuel, reset, and decide what matters most this afternoon.',
-    button: "LET'S GO",
-  },
-];
+const primaryGoal = goals[0] ?? null;
 
-const nextMove = nextMoves[nextMoveStep % nextMoves.length];
+const primaryAction =
+  primaryGoal
+    ? actions.find(
+        (action) =>
+          action.goal_id === primaryGoal.id &&
+          action.status === 'pending'
+      ) ?? null
+    : null;
+
+const nextMove = primaryGoal
+  ? {
+      title: primaryGoal.title,
+      description:
+        primaryAction?.title ??
+        'Choose the next concrete action that moves this goal forward.',
+      button: 'START THIS MOVE',
+    }
+  : {
+      title: 'Set Your First Goal',
+      description: 'Create a goal so GOAL’D IN can guide your next move.',
+      button: 'GOAL IT',
+    };
   const loadCapacity = useCallback(async () => {
     const current = await getCapacityForDate();
     setCapacity(current);
@@ -305,9 +310,13 @@ const chooseCapacity = useCallback(
   </Text>
 
   <Pressable
-    onPress={() =>
-      setNextMoveStep((current) => current + 1)
-    }
+    onPress={() => {
+  if (primaryGoal) {
+    router.push(`/goal/${primaryGoal.id}` as any);
+  } else {
+    router.push('/goal-it' as any);
+  }
+}}
     style={{
       backgroundColor: GOLD,
       borderRadius: 16,
