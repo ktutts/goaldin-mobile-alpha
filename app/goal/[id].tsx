@@ -1,450 +1,453 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { supabase } from '@/lib/supabase';
-import { Action, Goal,Milestone } from '@/types/models';
+import { Action, Goal } from '@/types/models';
 import CircularProgress from '../../components/CircularProgress';
+import GoalTimePicker from '../../components/GoalTimePicker';
+import * as Notifications from 'expo-notifications';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getCapacityForDate, capacityLabels } from '@/lib/capacity';
 
-import {
-  calculateGoalProgress,
-  getAdaptiveMove,
-} from '@/adaptivePlan';
-const [milestones, setMilestones] =
-  useState<Milestone[]>([]);
-import {
-  Capacity,
-  DEFAULT_CAPACITY_LEVEL,
-  capacityLabels,
-  capacityTargetMinutes,
-  getCapacityForDate,
-} from '@/lib/capacity';
-type StarterActionDraft = {
-  title: string;
-  description: string;
-  estimated_minutes: number;
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
+type GoalSchedule = {
+  id: string;
+  type: 'weekly' | 'date';
+  days?: number[];
+  times?: string[];
+  date?: string;
 };
 
 export default function GoalDetail() {
   const params = useLocalSearchParams<{ id?: string }>();
-  const [goal, setGoal] = useState<Goal | null>(null);
-  const [actions, setActions] = useState<Action[]>([]);
-  const [capacity, setCapacity] = useState<Capacity | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-
   const goalId = Array.isArray(params.id) ? params.id[0] : params.id;
 
-  const load = useCallback(async () => {
+  const [goal, setGoal] = useState<Goal | null>(null);
+  const [actions, setActions] = useState<Action[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [timerRunning, setTimerRunning] = useState(false);
+  const [moveStarted, setMoveStarted] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(0);
+
+  const [showReminderMenu, setShowReminderMenu] = useState(false);
+  const [showScheduleBuilder, setShowScheduleBuilder] = useState(false);
+  const [selectedDays, setSelectedDays] = useState<number[]>([]);
+  const [selectedTimes, setSelectedTimes] = useState<string[]>([]);
+  const [pendingTime, setPendingTime] = useState<Date>(new Date());
+  const [showCustomPicker, setShowCustomPicker] = useState(false);
+  const [savedSchedule, setSavedSchedule] = useState<{ days: number[]; times: string[] } | null>(null);
+  const [savedNotificationIds, setSavedNotificationIds] = useState<string[]>([]);
+  const [showScheduleSavedModal, setShowScheduleSavedModal] = useState(false);
+
+  useEffect(() => {
     if (!goalId) {
-      setError('No goal was selected.');
+      setError('No goal selected');
       setLoading(false);
       return;
     }
 
-    setLoading(true);
-    setError(null);
-    setNotice(null);
+    const load = async () => {
+      setLoading(true);
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          router.replace('/');
+          return;
+        }
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      router.replace('/');
-      return;
-    }
+        const [goalRes, actionRes] = await Promise.all([
+          supabase.from('goals').select('*').eq('id', goalId).eq('user_id', user.id).single(),
+          supabase.from('actions').select('*').eq('goal_id', goalId).eq('user_id', user.id).order('position', { ascending: true }),
+        ]);
 
-    const [goalRes, actionRes] = await Promise.all([
-      supabase.from('goals').select('*').eq('id', goalId).eq('user_id', user.id).single(),
-      supabase.from('actions').select('*').eq('goal_id', goalId).eq('user_id', user.id).order('position', { ascending: true }),
-    ]);
+        if (goalRes.error || !goalRes.data) {
+          setError(goalRes.error?.message || 'Could not load goal');
+          setGoal(null);
+          setActions([]);
+        } else {
+          setGoal(goalRes.data as Goal);
+          setActions((actionRes.data || []) as Action[]);
+        }
 
-    if (goalRes.error || !goalRes.data) {
-      setError(goalRes.error?.message || 'Goal could not be loaded.');
-      setGoal(null);
-      setActions([]);
-      setLoading(false);
-      return;
-    }
+        await getCapacityForDate();
+      } catch (err) {
+        console.error(err);
+        setError('Error loading goal');
+      } finally {
+        setLoading(false);
+      }
+    };
 
-    setGoal(goalRes.data as Goal);
-    setActions((actionRes.data || []) as Action[]);
-    const currentCapacity = await getCapacityForDate();
-    setCapacity(currentCapacity);
-    setLoading(false);
+    void load();
   }, [goalId]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
-
-  const createStarterActions = useCallback(async () => {
-    if (!goal || !goalId) return;
-
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const drafts = buildStarterActions(goal.title);
-    const rows = drafts.map((draft, index) => ({
-      goal_id: goal.id,
-      user_id: user.id,
-      title: draft.title,
-      description: draft.description,
-      status: 'pending' as const,
-      position: index,
-      estimated_minutes: draft.estimated_minutes,
-    }));
-
-    await supabase.from('actions').insert(rows);
-    await load();
-  }, [goal, goalId, load]);
-
-  const handleDone = useCallback(async (action: Action) => {
-    if (!goalId) return;
-
-    const now = new Date().toISOString();
-    await supabase.from('actions').update({ status: 'completed', completed_at: now }).eq('id', action.id);
-
-    const updatedActions = actions.map((item) => item.id === action.id ? { ...item, status: 'completed' as const, completed_at: now } : item);
-    const allCompleted = updatedActions.every((item) => item.status === 'completed');
-
-    if (allCompleted) {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        try {
-          await supabase.from('goals').update({ status: 'completed', completed_at: now }).eq('id', goalId);
-        } catch {
-          await supabase.from('goals').update({ status: 'completed' }).eq('id', goalId);
+    if (!timerRunning) return;
+    const id = setInterval(() => {
+      setSecondsLeft((s) => {
+        if (s <= 1) {
+          setTimerRunning(false);
+          setMoveStarted(false);
+          return 0;
         }
+        return s - 1;
+      });
+    }, 1000);
 
-        const { data: existingWins } = await supabase.from('wins').select('id').eq('goal_id', goalId).eq('user_id', user.id).limit(1);
-        if (!existingWins?.length) {
-          await supabase.from('wins').insert({
-            user_id: user.id,
-            goal_id: goalId,
-            title: goal?.title || 'Goal completed',
-            summary: 'Completed in GOAL\'D IN',
-          });
+    return () => clearInterval(id);
+  }, [timerRunning]);
+
+  const nextPending = actions.find((a) => a.status === 'pending');
+
+  function formatTimeFromDate(d: Date) {
+    return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+
+  function addSelectedTimeFromDate(date: Date) {
+    const t = formatTimeFromDate(date);
+    setSelectedTimes((prev) => (prev.includes(t) ? prev : [...prev, t]));
+    setPendingTime(date);
+    setShowCustomPicker(false);
+  }
+
+  function cancelScheduleEditing() {
+    if (savedSchedule) {
+      setSelectedDays(savedSchedule.days.slice());
+      setSelectedTimes(savedSchedule.times.slice());
+    } else {
+      setSelectedDays([]);
+      setSelectedTimes([]);
+    }
+    setShowScheduleBuilder(false);
+  }
+
+  useEffect(() => {
+    // load saved schedule for this goal if present
+    const loadSaved = async () => {
+      if (!goalId) return;
+      try {
+        const raw = await AsyncStorage.getItem(`goal-schedule-${goalId}`);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (parsed?.days && parsed?.times) {
+          setSavedSchedule({ days: parsed.days, times: parsed.times });
+          setSelectedDays(parsed.days);
+          setSelectedTimes(parsed.times);
+          setSavedNotificationIds(parsed.notificationIds || []);
         }
-        Alert.alert('WIN RECORDED', 'Nice work — this goal is marked complete.');
+      } catch (e) {
+        // ignore
       }
+    };
+
+    void loadSaved();
+  }, [goalId]);
+
+  async function scheduleSuggestedSchedule() {
+    try {
+      const text = `${goal?.title || ''} ${actions[0]?.title || ''}`.toLowerCase();
+      let times;
+      if (text.includes('water') || text.includes('hydrate') || text.includes('hydration')) {
+        times = [ { hour: 8, minute: 0 }, { hour: 11, minute: 0 }, { hour: 14, minute: 0 }, { hour: 17, minute: 0 } ];
+      } else if (text.includes('breakfast')) {
+        times = [{ hour: 7, minute: 0 }];
+      } else if (text.includes('lunch')) {
+        times = [{ hour: 12, minute: 0 }];
+      } else if (text.includes('dinner')) {
+        times = [{ hour: 18, minute: 0 }];
+      } else if (text.includes('workout') || text.includes('exercise') || text.includes('gym')) {
+        times = [{ hour: 17, minute: 0 }];
+      } else {
+        times = [{ hour: 9, minute: 0 }, { hour: 14, minute: 0 }];
+      }
+
+      const formattedTimesText = times.map((time) => {
+        const hour12 = time.hour % 12 || 12;
+        const ampm = time.hour >= 12 ? 'PM' : 'AM';
+        return `${hour12}:${String(time.minute).padStart(2, '0')} ${ampm}`;
+      }).join(' · ');
+
+      for (const time of times) {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: "GOAL'D IN · NEXT MOVE",
+            body: actions[0]?.title ? `Time for ${actions[0].title}. Stay ready.` : 'Time for your next move. Stay ready.',
+            sound: true,
+          },
+          trigger: { type: Notifications.SchedulableTriggerInputTypes.DAILY, hour: time.hour, minute: time.minute }
+        });
+      }
+
+      setShowReminderMenu(false);
+      Alert.alert('SCHEDULE SET', `GOAL'D IN will remind you at ${formattedTimesText}.`);
+    } catch (err) {
+      console.error('Suggested schedule error', err);
+      Alert.alert('Could not set schedule', err instanceof Error ? err.message : 'Please try again.');
+    }
+  }
+
+  function removeSelectedTime(t: string) {
+    setSelectedTimes((prev) => prev.filter((x) => x !== t));
+  }
+
+  async function saveMoveSchedule() {
+    if (selectedDays.length === 0 || selectedTimes.length === 0) {
+      Alert.alert('Select days and times', 'Choose at least one day and one time.');
+      return;
     }
 
-    await load();
-  }, [actions, goal, goalId, load]);
+    try {
+      const { status } = await Notifications.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Notifications blocked', 'Allow notifications to receive reminders.');
+        return;
+      }
 
-  const handleLater = useCallback(async (action: Action) => {
-    const nextPosition = Math.max(0, ...actions.map((item) => item.position)) + 1;
-    await supabase.from('actions').update({ position: nextPosition }).eq('id', action.id);
-    await load();
-  }, [actions, load]);
+      // Cancel previously saved notifications (when editing)
+      for (const id of savedNotificationIds) {
+        try {
+          await Notifications.cancelScheduledNotificationAsync(id);
+        } catch (e) {
+          // ignore
+        }
+      }
 
-  const handleMakeEasier = useCallback(async (action: Action) => {
-    const preferredMinutes = capacityTargetMinutes[capacity?.level ?? DEFAULT_CAPACITY_LEVEL];
-    const nextTitle = makeEasierTitle(action.title, preferredMinutes);
-    await supabase.from('actions').update({ title: nextTitle, estimated_minutes: preferredMinutes }).eq('id', action.id);
-    await load();
-  }, [capacity?.level, load]);
+      const newIds: string[] = [];
+      // For each selected weekday and time, schedule a weekly notification
+      for (const weekday of selectedDays) {
+        for (const t of selectedTimes) {
+          const parts = t.match(/(\d+):(\d+)\s*(AM|PM)?/i);
+          if (!parts) continue;
+          let hour = parseInt(parts[1], 10);
+          const minute = parseInt(parts[2], 10);
+          const ampm = parts[3];
+          if (ampm) {
+            const up = ampm.toUpperCase();
+            if (up === 'PM' && hour < 12) hour += 12;
+            if (up === 'AM' && hour === 12) hour = 0;
+          }
 
-  if (loading) {
-    return (
-      <View style={s.center}>
-        <ActivityIndicator color="#F0D06A" />
-      </View>
-    );
+          const id = await Notifications.scheduleNotificationAsync({
+            content: {
+              title: "GOAL'D IN · NEXT MOVE",
+              body: nextPending?.title || goal?.title || 'Time for your next move',
+              sound: true,
+            },
+            trigger: {
+              type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+              weekday,
+              hour,
+              minute,
+            },
+          });
+
+          newIds.push(id);
+        }
+      }
+
+      // Persist saved schedule and notification ids
+      const scheduleObj = { days: selectedDays, times: selectedTimes };
+      setSavedSchedule(scheduleObj);
+      setSavedNotificationIds(newIds);
+      try {
+        await AsyncStorage.setItem(`goal-schedule-${goalId}`, JSON.stringify({ ...scheduleObj, notificationIds: newIds }));
+      } catch (e) {
+        // ignore
+      }
+
+      setShowScheduleSavedModal(true);
+      setShowScheduleBuilder(false);
+      setShowReminderMenu(false);
+    } catch (err) {
+      console.error(err);
+      Alert.alert('Could not save schedule', 'Please try again.');
+    }
   }
 
-  if (error) {
-    return (
-      <View style={s.page}>
-        <ScrollView contentContainerStyle={s.scroll}>
-          <Pressable style={s.backButton} onPress={() => router.back()}>
-            <Text style={s.backText}>← BACK</Text>
-          </Pressable>
-          <View style={s.errorCard}>
-            <Text style={s.errorTitle}>Could not load this goal</Text>
-            <Text style={s.errorCopy}>{error}</Text>
-            <Pressable style={s.button} onPress={() => router.replace('/today')}>
-              <Text style={s.buttonText}>BACK TO TODAY</Text>
-            </Pressable>
-          </View>
-        </ScrollView>
-      </View>
-    );
-  }
-
-  if (!goal) {
-    return null;
-  }
-
-  const completed = actions.filter((action) => action.status === 'completed').length;
-  const total = actions.length || 1;
-  const progress = Math.round((completed / total) * 100);
-  const nextPending = actions.find((action) => action.status === 'pending');
-  const hasActions = actions.length > 0;
+  if (loading) return <View style={s.center}><ActivityIndicator color="#F0D06A" /></View>;
+  if (error) return (
+    <View style={s.page}>
+      <ScrollView contentContainerStyle={s.scroll}>
+        <Pressable style={s.backButton} onPress={() => router.back()}><Text style={s.backText}>← BACK</Text></Pressable>
+        <View style={s.errorCard}><Text style={s.errorTitle}>Could not load</Text><Text style={s.errorCopy}>{error}</Text></View>
+      </ScrollView>
+    </View>
+  );
 
   return (
-   <SafeAreaView style={s.page} edges={['top']}>
+    <SafeAreaView style={s.page} edges={["top"]}>
       <ScrollView contentContainerStyle={s.scroll}>
-        <Pressable style={s.backButton} onPress={() => router.back()}>
-  <Text style={s.backText}>← BACK</Text>
-</Pressable>
+        <Pressable style={s.backButton} onPress={() => router.back()}><Text style={s.backText}>← BACK</Text></Pressable>
 
-<Text style={s.brand}>GOAL'D IN</Text>
+        <Text style={s.brand}>GOAL'D IN</Text>
 
-<View style={s.hero}>
-  <Text style={s.eyebrow}>ACTIVE GOAL</Text>
-  <Text style={s.title}>{goal.title}</Text>
+        <View style={s.hero}>
+          <Text style={s.eyebrow}>ACTIVE GOAL</Text>
+          <Text style={s.title}>{goal?.title}</Text>
+          <View style={s.progressWrap}><CircularProgress progress={Math.round((actions.filter(a=>a.status==='completed').length / (actions.length||1))*100)} size={160} strokeWidth={12} /></View>
+          <Text style={s.subtitle}>{goal?.title || ''}</Text>
+        </View>
 
-  <View style={s.progressWrap}>
-    <CircularProgress
-      progress={progress}
-      size={190}
-      strokeWidth={13}
-    />
-  </View>
+        <View style={s.nextMoveCard}>
+          <Text style={s.nextMoveLabel}>⚡  YOUR NEXT MOVE</Text>
 
-  <Text style={s.progressCaption}>
-    {completed} OF {actions.length} MOVES COMPLETE
-  </Text>
+          {nextPending ? (
+            <>
+              <Text style={s.nextMoveTitle}>{nextPending.title}</Text>
+              <Text style={s.nextMoveMeta}>{nextPending.estimated_minutes ? `${nextPending.estimated_minutes} MIN` : 'READY WHEN YOU ARE'}</Text>
 
-  <Text style={s.subtitle}>
-    {capacity
-      ? `TODAY · ${capacityLabels[capacity.level]}`
-      : 'Capacity not set yet. Check in from Home.'}
-  </Text>
-</View>
+              <Pressable style={s.startMoveButton} onPress={() => {
+                if (!moveStarted) { setMoveStarted(true); setSecondsLeft((nextPending.estimated_minutes ?? 1) * 60); setTimerRunning(true); return; }
+                setTimerRunning((c)=>!c);
+              }}>
+                <Text style={s.startMoveText}>{!moveStarted ? 'START MOVE →' : timerRunning ? `PAUSE · ${Math.floor(secondsLeft/60)}:${String(secondsLeft%60).padStart(2,'0')}` : `RESUME · ${Math.floor(secondsLeft/60)}:${String(secondsLeft%60).padStart(2,'0')}`}</Text>
+              </Pressable>
 
-<View style={s.nextMoveCard}>
-  <Text style={s.nextMoveLabel}>⚡  YOUR NEXT MOVE</Text>
+              <Pressable onPress={() => setShowReminderMenu(true)} style={{ marginTop: 14, borderWidth: 1, borderColor: '#D8B24A', borderRadius: 16, paddingVertical: 16, alignItems: 'center' }}>
+                <Text style={{ color: '#D8B24A', fontWeight: '900' }}>🔔 SET REMINDER</Text>
+              </Pressable>
 
-  {nextPending ? (
-    <>
-      <Text style={s.nextMoveTitle}>{nextPending.title}</Text>
+              {showReminderMenu && (
+                <View style={s.reminderMenu}>
+                  <Text style={s.reminderTitle}>WHEN SHOULD I REMIND YOU?</Text>
 
-      <Text style={s.nextMoveMeta}>
-        {nextPending.estimated_minutes
-          ? `${nextPending.estimated_minutes} MIN${capacity ? ` · ${capacityLabels[capacity.level]}` : ''}`
-          : 'READY WHEN YOU ARE'}
-      </Text>
+                  <Pressable onPress={() => setShowScheduleBuilder(true)} style={s.primaryButton}><Text style={s.primaryButtonText}>MAKE A SCHEDULE</Text></Pressable>
+                  <Pressable onPress={() => { void scheduleSuggestedSchedule(); }} style={{ paddingVertical: 12 }}><Text style={{ color: '#D8B24A', fontWeight: '900' }}>USE SUGGESTED SCHEDULE</Text></Pressable>
 
-      <Pressable
-        style={s.startMoveButton}
-        onPress={() => {
-          // We'll wire timer/action behavior here next.
-        }}
-      >
-        <Text style={s.startMoveText}>START MOVE  →</Text>
-      </Pressable>
-    </>
-  ) : (
-    <>
-      <Text style={s.nextMoveTitle}>Goal complete.</Text>
-      <Text style={s.nextMoveMeta}>YOU DID IT.</Text>
-    </>
-  )}
-</View>
-
-        {notice ? <View style={s.notice}><Text style={s.noticeText}>{notice}</Text></View> : null}
-
-        {!hasActions ? (
-          <View style={s.emptyCard}>
-            <Text style={s.emptyTitle}>THIS GOAL NEEDS A NEXT MOVE</Text>
-            <Pressable style={s.button} onPress={() => void createStarterActions()}>
-              <Text style={s.buttonText}>BUILD MY NEXT MOVE</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <>
-            <Text style={s.label}>ACTION CHECKLIST</Text>
-            {actions.map((action) => {
-              const statusLabel = action.status === 'completed' ? 'DONE' : action.status === 'pending' ? 'PENDING' : 'SKIPPED';
-              const isPending = action.status === 'pending';
-
-              return (
-                <View key={action.id} style={s.actionRow}>
-                  <View style={s.actionMeta}>
-                    <Text style={s.actionTitle}>{action.title}</Text>
-                    {action.description ? <Text style={s.actionDescription}>{action.description}</Text> : null}
-                    {action.estimated_minutes ? <Text style={s.actionMinutes}>{action.estimated_minutes} min</Text> : null}
-                  </View>
-                  <View style={s.actionRight}>
-                    <View style={[s.badge, action.status === 'completed' ? s.badgeDone : action.status === 'pending' ? s.badgePending : s.badgeSkipped]}>
-                      <Text style={s.badgeText}>{statusLabel}</Text>
+                  {savedSchedule && !showScheduleBuilder && (
+                    <View style={{ marginTop: 12 }}>
+                      <Text style={{ color: '#D8B24A', fontWeight: '900', marginBottom: 6 }}>SAVED SCHEDULE</Text>
+                      <Text style={{ color: '#FFFFFF', fontWeight: '900' }}>{savedSchedule.days.map((d)=>['S','M','T','W','T','F','S'][d-1]).join(' · ')}</Text>
+                      <Text style={{ color: '#FFFFFF', fontWeight: '900', marginTop: 6 }}>{savedSchedule.times.join(' · ')}</Text>
+                      <Pressable onPress={() => { setSelectedDays(savedSchedule.days.slice()); setSelectedTimes(savedSchedule.times.slice()); setShowScheduleBuilder(true); }} style={{ marginTop: 10 }}>
+                        <Text style={{ color: '#D8B24A', fontWeight: '900' }}>EDIT SCHEDULE</Text>
+                      </Pressable>
                     </View>
-                    {isPending ? (
-                      <View style={s.actionButtons}>
-                        <Pressable style={s.smallButton} onPress={() => void handleDone(action)}>
-                          <Text style={s.smallButtonText}>DONE</Text>
+                  )}
+
+                  {showScheduleBuilder && (
+                    <View style={s.scheduleBuilder}>
+                      <Text style={s.sectionTitle}>CHOOSE DAYS</Text>
+
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
+                        {['S','M','T','W','T','F','S'].map((label, idx) => {
+                          const dayNum = idx + 1; // 1..7
+                          const sel = selectedDays.includes(dayNum);
+                          return (
+                            <Pressable key={label + dayNum} onPress={() => setSelectedDays(p => p.includes(dayNum) ? p.filter(x=>x!==dayNum) : [...p, dayNum])} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: sel ? '#D8B24A' : '#3A321F', backgroundColor: sel ? '#D8B24A' : 'transparent', marginRight: 8, marginBottom: 8 }}>
+                              <Text style={{ color: sel ? '#0B0B0B' : '#D8B24A', fontWeight: '900' }}>{label}</Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+
+                      <Pressable onPress={() => { setPendingTime(new Date()); setShowCustomPicker(true); }} style={{ marginTop: 12, backgroundColor: '#111111', borderWidth: 1, borderColor: '#3A321F', paddingVertical: 12, alignItems: 'center', borderRadius: 12 }}>
+                        <Text style={{ color: '#D8B24A', fontWeight: '900' }}>+ ADD TIME</Text>
+                      </Pressable>
+
+                      {selectedTimes.length > 0 && (
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 12 }}>
+                          {selectedTimes.map(t => (
+                            <View key={t} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 16, borderWidth: 1, borderColor: '#3A321F', marginRight: 8, marginBottom: 8, backgroundColor: '#111' }}>
+                              <Text style={{ color: '#FFFFFF', fontWeight: '800', marginRight: 8 }}>{t}</Text>
+                              <Pressable onPress={() => setSelectedTimes(p => p.filter(x => x !== t))} style={{ padding: 6 }}>
+                                <Text style={{ color: '#D8B24A', fontWeight: '900' }}>×</Text>
+                              </Pressable>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 14 }}>
+                        <Pressable onPress={cancelScheduleEditing} style={{ paddingVertical: 14, paddingHorizontal: 18, borderRadius: 12, borderWidth: 1, borderColor: '#3A321F', alignItems: 'center' }}>
+                          <Text style={{ color: '#8E8E93', fontWeight: '900' }}>CANCEL</Text>
                         </Pressable>
-                        <Pressable style={s.smallButtonSecondary} onPress={() => void handleLater(action)}>
-                          <Text style={s.smallButtonText}>LATER</Text>
-                        </Pressable>
-                        <Pressable style={s.smallButtonSecondary} onPress={() => void handleMakeEasier(action)}>
-                          <Text style={s.smallButtonText}>MAKE EASIER</Text>
+
+                        <Pressable onPress={saveMoveSchedule} style={{ backgroundColor: '#D8B24A', paddingVertical: 14, paddingHorizontal: 18, borderRadius: 12, alignItems: 'center' }}>
+                          <Text style={{ color: '#0B0B0B', fontWeight: '900' }}>SAVE SCHEDULE</Text>
                         </Pressable>
                       </View>
-                    ) : null}
-                  </View>
+
+                      <GoalTimePicker show={showCustomPicker} initialDate={pendingTime} onCancel={() => setShowCustomPicker(false)} onAdd={addSelectedTimeFromDate} />
+                    </View>
+                  )}
                 </View>
-              );
-            })}
-          </>
-        )}
+              )}
+
+            </>
+          ) : (
+            <Text style={{ color: '#8E8E93' }}>No pending moves</Text>
+          )}
+        </View>
+
       </ScrollView>
+
+      <Modal visible={showScheduleSavedModal} transparent animationType="fade" onRequestClose={() => setShowScheduleSavedModal(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ width: '86%', backgroundColor: '#111111', borderRadius: 12, borderWidth: 1, borderColor: '#D8B24A', padding: 18 }}>
+            <Text style={{ color: '#D8B24A', fontWeight: '900', fontSize: 16, marginBottom: 8 }}>SCHEDULE SET</Text>
+            <Text style={{ color: '#FFFFFF', marginBottom: 18 }}>GOAL'D IN will remind you on the chosen days and times.</Text>
+
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12 }}>
+              {savedSchedule && (
+                <Pressable onPress={() => {
+                  setShowScheduleSavedModal(false);
+                  setSelectedDays(savedSchedule.days.slice());
+                  setSelectedTimes(savedSchedule.times.slice());
+                  setShowScheduleBuilder(true);
+                }} style={{ paddingVertical: 10, paddingHorizontal: 14 }}>
+                  <Text style={{ color: '#D8B24A', fontWeight: '900' }}>EDIT SCHEDULE</Text>
+                </Pressable>
+              )}
+
+              <Pressable onPress={() => setShowScheduleSavedModal(false)} style={{ backgroundColor: '#D8B24A', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 }}>
+                <Text style={{ color: '#0B0B0B', fontWeight: '900' }}>DONE</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }
 
-function buildStarterActions(title: string): StarterActionDraft[] {
-  const normalized = title.toLowerCase();
-
-  if (normalized.includes('laundry')) {
-    return [
-      { title: 'Gather the clean laundry', description: 'Collect the clothes that are ready to be put away.', estimated_minutes: 10 },
-      { title: 'Put away hanging clothes', description: 'Hang up the shirts and other garments that belong in the closet.', estimated_minutes: 12 },
-      { title: 'Fold and put away remaining clothes', description: 'Finish the rest of the laundry so the room feels reset.', estimated_minutes: 15 },
-    ];
-  }
-
-  if (normalized.includes('workout') || normalized.includes('exercise')) {
-    return [
-      { title: 'Choose today\'s workout', description: 'Pick the routine that fits your energy and time.', estimated_minutes: 5 },
-      { title: 'Complete the warm-up', description: 'Get your body moving before the main set.', estimated_minutes: 8 },
-      { title: 'Finish the workout', description: 'Complete the main exercises and wrap up.', estimated_minutes: 20 },
-    ];
-  }
-
-  if (normalized.includes('fort')) {
-    return [
-      { title: 'Choose the location and materials', description: 'Pick a spot and gather blankets, pillows, and supports.', estimated_minutes: 8 },
-      { title: 'Build the main structure', description: 'Create the base of the fort.', estimated_minutes: 12 },
-      { title: 'Add blankets, pillows, and finishing touches', description: 'Make it cozy and complete.', estimated_minutes: 10 },
-    ];
-  }
-
-  return [
-    { title: 'Decide what finished looks like', description: 'Clarify the result before you begin.', estimated_minutes: 8 },
-    { title: 'Complete the first useful step', description: 'Start with the smallest meaningful action.', estimated_minutes: 10 },
-    { title: 'Finish and check the result', description: 'Wrap up and confirm it is done.', estimated_minutes: 12 },
-  ];
-}
-
-function makeEasierTitle(title: string, minutes: number) {
-  const cleaned = title.replace(/^[0-9]+-minute\s+/i, '').trim();
-  return `${minutes}-minute ${cleaned}`;
-}
-
 const s = StyleSheet.create({
-  page: { flex: 1, backgroundColor: '#0B0B0D' },
-  scroll: { padding: 24, paddingTop: 56, paddingBottom: 40 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0B0B0D' },
-  backButton: { alignSelf: 'flex-start', marginBottom: 18 },
-  backText: { color: '#D6AA3F', fontWeight: '900', letterSpacing: 1.5 },
-  brand: { color: '#F0D06A', fontWeight: '900', letterSpacing: 3, marginBottom: 8 },
-  title: { color: '#E5E5E5', fontSize: 32, fontWeight: '600', marginBottom: 6 },
-  subtitle: { color: '#A9A9A9', fontSize: 12, letterSpacing: 2, marginBottom: 10, fontWeight: '800' },
-  track: { height: 10, backgroundColor: '#18181B', borderRadius: 999, overflow: 'hidden', marginBottom: 8 },
-  fill: { height: '100%', backgroundColor: '#D6AA3F' },
-  progress: { color: '#E5E5E5', fontWeight: '800', marginBottom: 18 },
-  panel: { backgroundColor: '#121214', borderRadius: 18, padding: 18, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', marginBottom: 20 },
-  label: { color: '#A9A9A9', fontSize: 11, letterSpacing: 1.5, fontWeight: '800', marginBottom: 8 },
-  next: { color: '#E5E5E5', fontSize: 18, fontWeight: '700' },
-  notice: { backgroundColor: '#18181B', padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: 'rgba(214,170,63,0.15)' },
-  noticeText: { color: '#F0D06A', fontWeight: '800' },
-  emptyCard: { backgroundColor: '#121214', borderRadius: 18, padding: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', marginBottom: 20 },
-  emptyTitle: { color: '#E5E5E5', fontSize: 20, fontWeight: '800', marginBottom: 16 },
-  actionRow: { backgroundColor: '#18181B', borderRadius: 16, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
-  actionMeta: { flex: 1, marginRight: 12 },
-  actionTitle: { color: '#E5E5E5', fontWeight: '700', fontSize: 16 },
-  actionDescription: { color: '#A9A9A9', marginTop: 4, lineHeight: 18 },
-  actionMinutes: { color: '#F0D06A', marginTop: 6, fontWeight: '700' },
-  actionRight: { alignItems: 'flex-end', gap: 8 },
-  actionButtons: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-end' },
-  smallButton: { backgroundColor: '#F0D06A', paddingHorizontal: 10, paddingVertical: 7, borderRadius: 999 },
-  smallButtonSecondary: { backgroundColor: '#1B1B1B', paddingHorizontal: 10, paddingVertical: 7, borderRadius: 999 },
-  smallButtonText: { color: '#E5E5E5', fontWeight: '800', fontSize: 11 },
-  badge: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
-  badgeDone: { backgroundColor: '#D6AA3F' },
-  badgePending: { backgroundColor: '#1B1B1B' },
-  badgeSkipped: { backgroundColor: '#444' },
-  badgeText: { color: '#fff', fontWeight: '800', fontSize: 11, letterSpacing: 1 },
-  errorCard: { backgroundColor: '#121214', borderRadius: 18, padding: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
-  errorTitle: { color: '#E5E5E5', fontSize: 20, fontWeight: '800', marginBottom: 8 },
-  errorCopy: { color: '#A9A9A9', marginBottom: 16, lineHeight: 20 },
-  button: { backgroundColor: '#F0D06A', padding: 14, borderRadius: 14, alignItems: 'center' },
-  buttonText: { color: '#090909', fontWeight: '900' },
-hero: {
-  marginTop: 22,
-  marginBottom: 24,
-},
-
-eyebrow: {
-  color: '#F0D06A',
-  fontSize: 11,
-  fontWeight: '800',
-  letterSpacing: 1.5,
-  marginBottom: 10,
-},
-
-progressWrap: {
-  alignItems: 'center',
-  marginTop: 26,
-  marginBottom: 14,
-},
-
-progressCaption: {
-  color: '#8D8D8D',
-  fontSize: 11,
-  fontWeight: '800',
-  letterSpacing: 1.5,
-  textAlign: 'center',
-},
-
-nextMoveCard: {
-  backgroundColor: '#121214',
-  borderWidth: 1,
-  borderColor: 'rgba(214,170,63,0.15)',
-  borderRadius: 24,
-  padding: 22,
-  marginBottom: 28,
-},
-
-nextMoveLabel: {
-  color: '#F0D06A',
-  fontSize: 11,
-  fontWeight: '900',
-  letterSpacing: 1.5,
-  marginBottom: 14,
-},
-
-nextMoveTitle: {
-  color: '#E5E5E5',
-  fontSize: 25,
-  lineHeight: 30,
-  fontWeight: '700',
-},
-
-nextMoveMeta: {
-  color: '#F0D06A',
-  fontSize: 12,
-  fontWeight: '800',
-  letterSpacing: 1.3,
-  marginTop: 8,
-},
-
-startMoveButton: {
-  backgroundColor: '#F0D06A',
-  minHeight: 56,
-  borderRadius: 16,
-  alignItems: 'center',
-  justifyContent: 'center',
-  marginTop: 20,
-},
-
-startMoveText: {
-  color: '#090909',
-  fontSize: 14,
-  fontWeight: '900',
-  letterSpacing: 1.1,
-},
+  page: { flex: 1, backgroundColor: '#0B0B0B' },
+  scroll: { padding: 18 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  backButton: { marginBottom: 8 },
+  backText: { color: '#D8B24A', fontWeight: '900' },
+  brand: { color: '#D8B24A', fontWeight: '900', fontSize: 12, letterSpacing: 1.5, marginBottom: 12 },
+  hero: { marginBottom: 18 },
+  eyebrow: { color: '#8E8E93', fontSize: 12, marginBottom: 6 },
+  title: { color: '#FFFFFF', fontSize: 20, fontWeight: '900', marginBottom: 12 },
+  progressWrap: { alignItems: 'center', marginVertical: 8 },
+  subtitle: { color: '#8E8E93', marginTop: 8 },
+  nextMoveCard: { padding: 12, backgroundColor: '#111111', borderRadius: 12, borderWidth: 1, borderColor: '#3A321F' },
+  nextMoveLabel: { color: '#D8B24A', fontWeight: '900', marginBottom: 8 },
+  nextMoveTitle: { color: '#FFFFFF', fontWeight: '900', fontSize: 16 },
+  nextMoveMeta: { color: '#8E8E93', marginTop: 6 },
+  startMoveButton: { marginTop: 12, backgroundColor: '#D8B24A', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  startMoveText: { color: '#0B0B0B', fontWeight: '900' },
+  reminderMenu: { marginTop: 14, borderWidth: 1, borderColor: '#3A3425', borderRadius: 18, padding: 16, backgroundColor: '#111111' },
+  reminderTitle: { color: '#D8B24A', fontSize: 13, fontWeight: '900', letterSpacing: 1.5, marginBottom: 14 },
+  primaryButton: { backgroundColor: '#D8B24A', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginBottom: 8 },
+  primaryButtonText: { color: '#0B0B0B', fontWeight: '900' },
+  scheduleBuilder: { marginTop: 12, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#3A321F' },
+  sectionTitle: { color: '#D8B24A', fontWeight: '900', marginBottom: 8 },
+  errorCard: { marginTop: 20, padding: 16 },
+  errorTitle: { fontWeight: '900', color: '#fff' },
+  errorCopy: { color: '#ddd', marginTop: 8 },
 });
