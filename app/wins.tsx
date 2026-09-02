@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react';
 import { ScrollView, Share, StyleSheet, Text, Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
-import { Win } from '@/types/models';
+import { Goal, Win } from '@/types/models';
 
 export default function Wins() {
   const [wins, setWins] = useState<Win[]>([]);
-
+const [archivedGoals, setArchivedGoals] = useState<Goal[]>([]);
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -18,6 +18,14 @@ export default function Wins() {
           .order('created_at', { ascending: false });
 
         setWins((data || []) as Win[]);
+        const { data: archivedData } = await supabase
+  .from('goals')
+  .select('*')
+  .eq('user_id', user.id)
+  .eq('status', 'archived')
+  .order('created_at', { ascending: false });
+
+setArchivedGoals((archivedData || []) as Goal[]);
       }
     })();
   }, []);
@@ -51,6 +59,81 @@ export default function Wins() {
       <Pressable onPress={() => router.back()}>
         <Text style={s.back}>← Back</Text>
       </Pressable>
+      {archivedGoals.length > 0 && (
+  <View style={{ marginTop: 32 }}>
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontSize: 13,
+        fontWeight: '900',
+        letterSpacing: 2,
+        marginBottom: 14,
+      }}
+    >
+      ARCHIVED ACHIEVEMENTS
+    </Text>
+
+    {archivedGoals.map((goal) => (
+      <View
+        key={goal.id}
+        style={{
+          backgroundColor: '#111111',
+          borderWidth: 1,
+          borderColor: '#2A2A2D',
+          borderRadius: 20,
+          padding: 20,
+          marginBottom: 14,
+        }}
+      >
+        <Text
+          style={{
+            color: '#D8B24A',
+            fontSize: 12,
+            fontWeight: '900',
+            letterSpacing: 1.5,
+          }}
+        >
+          GOAL'D IN ✓
+        </Text>
+
+        <Text
+          style={{
+            color: '#E5E5E5',
+            fontSize: 22,
+            fontWeight: '800',
+            marginTop: 8,
+          }}
+        >
+          {goal.title}
+        </Text>
+
+        <Text
+  style={{
+    color: '#777777',
+    fontSize: 13,
+    marginTop: 8,
+  }}
+>
+  {goal.completed_at
+    ? `Completed ${new Date(goal.completed_at).toLocaleDateString()}`
+    : 'Completed'}
+</Text>
+
+{goal.archived_at && (
+  <Text
+    style={{
+      color: '#666666',
+      fontSize: 12,
+      marginTop: 4,
+    }}
+  >
+    {`Archived ${new Date(goal.archived_at).toLocaleDateString()}`}
+  </Text>
+)}
+      </View>
+    ))}
+  </View>
+)}
     </ScrollView>
   );
 }

@@ -8,8 +8,8 @@ create table if not exists public.goals (
 create table if not exists public.actions (
   id uuid primary key default gen_random_uuid(), goal_id uuid not null references public.goals(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade, title text not null,
-  status text not null default 'pending' check (status in ('pending','completed','skipped')),
-  estimated_minutes int, position int not null default 0, completed_at timestamptz, created_at timestamptz not null default now()
+  status text not null default 'active' check (status in ('active','completed','archived')),
+  estimated_minutes int, type text default 'task',position int not null default 0, completed_at timestamptz, created_at timestamptz not null default now()
 );
 create table if not exists public.wins (
   id uuid primary key default gen_random_uuid(), user_id uuid not null references auth.users(id) on delete cascade,
@@ -160,3 +160,8 @@ create policy "Users can delete own milestones"
 on public.milestones
 for delete
 using (auth.uid() = user_id);
+alter table public.goals
+add column if not exists completed_at timestamptz;
+
+alter table public.goals
+add column if not exists archived_at timestamptz;

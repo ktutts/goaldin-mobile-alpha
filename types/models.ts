@@ -2,10 +2,11 @@ export type Goal = {
   id: string;
   user_id: string;
   title: string;
-  status: 'active' | 'completed' | 'paused';
+  status: 'active' | 'completed' | 'paused' | 'archived';
   source?: string | null;
   target_date: string | null;
   completed_at: string | null;
+  archived_at: string | null;
   created_at: string;outcome?: string | null;
 why?: string | null;
 target?: string | null;
@@ -23,6 +24,7 @@ export type Action = {
   description: string | null;
   status: 'pending' | 'completed' | 'skipped';
   estimated_minutes: number | null;
+  type?: 'task' | 'timed' | 'scheduled' | 'milestone';
   position: number;
   completed_at: string | null;
 

@@ -1,23 +1,16 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View, } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { Action, Goal } from '@/types/models';
 import CircularProgress from '../../components/CircularProgress';
 import GoalTimePicker from '../../components/GoalTimePicker';
-import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getCapacityForDate, capacityLabels } from '@/lib/capacity';
+import Constants from 'expo-constants';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+
 
 type GoalSchedule = {
   id: string;
@@ -26,6 +19,14 @@ type GoalSchedule = {
   times?: string[];
   date?: string;
 };
+const getNotifications = async () => {
+  try {
+    return await import('expo-notifications');
+  } catch {
+    return null;
+  }
+};
+
 
 export default function GoalDetail() {
   const params = useLocalSearchParams<{ id?: string }>();
@@ -35,7 +36,7 @@ export default function GoalDetail() {
   const [actions, setActions] = useState<Action[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
+  const [milestones, setMilestones] = useState<any[]>([]);
   const [timerRunning, setTimerRunning] = useState(false);
   const [moveStarted, setMoveStarted] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(0);
@@ -49,7 +50,157 @@ export default function GoalDetail() {
   const [savedSchedule, setSavedSchedule] = useState<{ days: number[]; times: string[] } | null>(null);
   const [savedNotificationIds, setSavedNotificationIds] = useState<string[]>([]);
   const [showScheduleSavedModal, setShowScheduleSavedModal] = useState(false);
+  const [showTimerMenu, setShowTimerMenu] = useState(false);
+  const [timerMinutes, setTimerMinutes] = useState('10');
+  const deleteGoal = () => {
+  if (!goalId) return;
+ 
 
+  Alert.alert(
+    'Delete Goal?',
+    'This will permanently delete this goal and its moves. This cannot be undone.',
+    [
+      {
+        text: 'Cancel',
+        style: 'cancel',
+      },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          const { error } = await supabase
+            .from('goals')
+            .delete()
+            .eq('id', goalId);
+
+          if (error) {
+            Alert.alert('Could not delete goal', error.message);
+            return;
+          }
+
+          router.replace('/today' as any);
+        },
+      },
+    ]
+  );
+};
+const archiveGoal = async () => {
+  if (!goalId) return;
+
+  const { error } = await supabase
+    .from('goals')
+    .update({
+  status: 'archived',
+  archived_at: new Date().toISOString(),
+})
+    .eq('id', goalId);
+
+  if (error) {
+    Alert.alert('Could not archive achievement', error.message);
+    return;
+  }
+
+  router.replace('/today' as any);
+};const shareAchievement = async () => {
+  try {
+    await Share.share({
+      message: `I just completed "${goal?.title ?? 'a goal'}". Stay Goal'D In.`,
+    });
+  } catch {
+    Alert.alert('Could not share achievement');
+  }
+};
+const renewGoal = async () => {
+  if (!goal) return;
+
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    Alert.alert('Sign in required', 'Please sign in and try again.');
+    return;
+  }
+
+  const { data: newGoal, error } = await supabase
+    .from('goals')
+    .insert({
+      user_id: user.id,
+      title: goal.title,
+      status: 'active',
+    })
+    .select()
+    .single();
+
+  if (error || !newGoal) {
+    Alert.alert(
+      'Could not renew goal',
+      error?.message || 'Please try again.'
+    );
+    return;
+  }
+
+  Alert.alert(
+    'Goal Renewed',
+    'A new active cycle has been created while this achievement stays in your history.',
+    [
+      {
+        text: 'OPEN NEW GOAL',
+        onPress: () => router.replace(`/goal/${newGoal.id}`),
+      },
+    ]
+  );
+};
+const completeMove = async (actionId: string) => {
+  const { error: actionError } = await supabase
+    .from('actions')
+    .update({
+  status: 'completed',
+  completed_at: new Date().toISOString(),
+})
+    .eq('id', actionId);
+
+  if (actionError) {
+    Alert.alert('Could not complete move', actionError.message);
+    return;
+  }
+
+  const remainingPending = actions.filter(
+    (action) => action.id !== actionId && action.status === 'pending'
+  );
+
+  setActions((current) =>
+    current.map((action) =>
+      action.id === actionId
+        ? { ...action, status: 'completed' }
+        : action
+    )
+  );
+
+  if (remainingPending.length === 0 && goalId) {
+    const { error: goalError } = await supabase
+      .from('goals')
+      .update({
+  status: 'completed',
+  completed_at: new Date().toISOString(),
+})
+      .eq('id', goalId);
+
+    if (goalError) {
+      Alert.alert('Move completed', 'The move was completed, but the goal could not be closed.');
+      return;
+    }
+
+    setGoal((current) =>
+  current
+    ? {
+        ...current,
+        status: 'completed',
+      }
+    : current
+);
+
+return;
+}
+};
   useEffect(() => {
     if (!goalId) {
       setError('No goal selected');
@@ -66,19 +217,39 @@ export default function GoalDetail() {
           return;
         }
 
-        const [goalRes, actionRes] = await Promise.all([
-          supabase.from('goals').select('*').eq('id', goalId).eq('user_id', user.id).single(),
-          supabase.from('actions').select('*').eq('goal_id', goalId).eq('user_id', user.id).order('position', { ascending: true }),
-        ]);
+        const [goalRes, actionRes, milestoneRes] = await Promise.all([
+  supabase
+    .from('goals')
+    .select('*')
+    .eq('id', goalId)
+    .eq('user_id', user.id)
+    .single(),
+
+  supabase
+    .from('actions')
+    .select('*')
+    .eq('goal_id', goalId)
+    .eq('user_id', user.id)
+    .order('position', { ascending: true }),
+
+  supabase
+    .from('milestones')
+    .select('*')
+    .eq('goal_id', goalId)
+    .eq('user_id', user.id)
+    .order('position', { ascending: true }),
+]);
 
         if (goalRes.error || !goalRes.data) {
           setError(goalRes.error?.message || 'Could not load goal');
           setGoal(null);
           setActions([]);
+          setMilestones([]);
         } else {
-          setGoal(goalRes.data as Goal);
-          setActions((actionRes.data || []) as Action[]);
-        }
+  setGoal(goalRes.data as Goal);
+  setActions((actionRes.data || []) as Action[]);
+  setMilestones(milestoneRes.data || []);
+}
 
         await getCapacityForDate();
       } catch (err) {
@@ -86,7 +257,9 @@ export default function GoalDetail() {
         setError('Error loading goal');
       } finally {
         setLoading(false);
-      }
+      
+
+};
     };
 
     void load();
@@ -177,7 +350,8 @@ export default function GoalDetail() {
         const ampm = time.hour >= 12 ? 'PM' : 'AM';
         return `${hour12}:${String(time.minute).padStart(2, '0')} ${ampm}`;
       }).join(' · ');
-
+const Notifications = await getNotifications();
+if (!Notifications) return;
       for (const time of times) {
         await Notifications.scheduleNotificationAsync({
           content: {
@@ -206,7 +380,8 @@ export default function GoalDetail() {
       Alert.alert('Select days and times', 'Choose at least one day and one time.');
       return;
     }
-
+const Notifications = await getNotifications();
+if (!Notifications) return;
     try {
       const { status } = await Notifications.requestPermissionsAsync();
       if (status !== 'granted') {
@@ -275,7 +450,7 @@ export default function GoalDetail() {
     }
   }
 
-  if (loading) return <View style={s.center}><ActivityIndicator color="#F0D06A" /></View>;
+  if (loading) return <View style={s.center}><ActivityIndicator color="#F0D06A" /></View>
   if (error) return (
     <View style={s.page}>
       <ScrollView contentContainerStyle={s.scroll}>
@@ -284,6 +459,7 @@ export default function GoalDetail() {
       </ScrollView>
     </View>
   );
+  
 
   return (
     <SafeAreaView style={s.page} edges={["top"]}>
@@ -293,9 +469,58 @@ export default function GoalDetail() {
         <Text style={s.brand}>GOAL'D IN</Text>
 
         <View style={s.hero}>
-          <Text style={s.eyebrow}>ACTIVE GOAL</Text>
+            <Pressable
+  onPress={() => {
+    Alert.alert(
+      'Goal Options',
+      undefined,
+      [
+        {
+          text: 'Delete Goal',
+          style: 'destructive',
+          onPress: deleteGoal,
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+      ]
+    );
+  }}
+  style={{
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    zIndex: 10,
+  }}
+>
+  <Text
+    style={{
+      color: '#D8B24A',
+      fontSize: 24,
+      fontWeight: '900',
+      letterSpacing: 2,
+    }}
+  >
+    •••
+  </Text>
+</Pressable>
+          <Text style={s.eyebrow}>
+  {!nextPending ? 'GOAL COMPLETE ✓' : 'ACTIVE GOAL'}
+</Text>
           <Text style={s.title}>{goal?.title}</Text>
-          <View style={s.progressWrap}><CircularProgress progress={Math.round((actions.filter(a=>a.status==='completed').length / (actions.length||1))*100)} size={160} strokeWidth={12} /></View>
+          <CircularProgress
+  progress={Math.round(
+    (actions.filter(a => a.status === 'completed').length /
+      (actions.length || 1)) *
+      100
+  )}
+  size={160}
+  strokeWidth={12}
+  label={!nextPending ? "GOAL'D IN ✓" : "IN PROGRESS"}
+/>
           <Text style={s.subtitle}>{goal?.title || ''}</Text>
         </View>
 
@@ -304,21 +529,167 @@ export default function GoalDetail() {
 
           {nextPending ? (
             <>
-              <Text style={s.nextMoveTitle}>{nextPending.title}</Text>
+            <Text style={s.nextMoveTitle}>{nextPending.title}</Text>
               <Text style={s.nextMoveMeta}>{nextPending.estimated_minutes ? `${nextPending.estimated_minutes} MIN` : 'READY WHEN YOU ARE'}</Text>
 
-              <Pressable style={s.startMoveButton} onPress={() => {
-                if (!moveStarted) { setMoveStarted(true); setSecondsLeft((nextPending.estimated_minutes ?? 1) * 60); setTimerRunning(true); return; }
-                setTimerRunning((c)=>!c);
-              }}>
-                <Text style={s.startMoveText}>{!moveStarted ? 'START MOVE →' : timerRunning ? `PAUSE · ${Math.floor(secondsLeft/60)}:${String(secondsLeft%60).padStart(2,'0')}` : `RESUME · ${Math.floor(secondsLeft/60)}:${String(secondsLeft%60).padStart(2,'0')}`}</Text>
-              </Pressable>
+           <Pressable
+  style={s.startMoveButton}
+  onPress={() => completeMove(nextPending.id)}
+>
+  <Text style={s.startMoveText}>MARK COMPLETE</Text>
+</Pressable>
+</>
+          ):(
+            <>
+<Pressable
+  onPress={() => setShowTimerMenu(true)}
+  style={{
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: '#D8B24A',
+    borderRadius: 16,
+    paddingVertical: 16,
+    alignItems: 'center',
+  }}
+>
+  <Text
+    style={{
+      color: '#D8B24A',
+      fontWeight: '900',
+      letterSpacing: 1,
+    }}
+  >
+    ⏱ SET TIMER
+  </Text>
+
+    {moveStarted && (
+  <View
+    style={{
+      marginTop: 14,
+      borderWidth: 1,
+      borderColor: '#3A3426',
+      borderRadius: 16,
+      padding: 18,
+    }}
+  >
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontWeight: '900',
+        letterSpacing: 1,
+        marginBottom: 10,
+      }}
+    >
+      TIMER
+    </Text>
+
+    <Text
+      style={{
+        color: '#FFFFFF',
+        fontSize: 32,
+        fontWeight: '900',
+        textAlign: 'center',
+        marginBottom: 14,
+      }}
+    >
+      {Math.floor(secondsLeft / 60)}:
+      {String(secondsLeft % 60).padStart(2, '0')}
+    </Text>
+
+    <Pressable
+      style={s.startMoveButton}
+      onPress={() => setTimerRunning((current) => !current)}
+    >
+      <Text style={s.startMoveText}>
+        {timerRunning ? 'PAUSE TIMER' : 'RESUME TIMER'}
+      </Text>
+    </Pressable>
+    <Pressable
+  onPress={() => {
+    setTimerRunning(false);
+    setMoveStarted(false);
+    setSecondsLeft(0);
+  }}
+  style={{
+    marginTop: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  }}
+>
+  <Text
+    style={{
+      color: '#D8B24A',
+      fontWeight: '900',
+      letterSpacing: 1,
+    }}
+  >
+    CANCEL TIMER
+  </Text>
+</Pressable>
+  </View>
+)}
+
+    
+</Pressable>
+{showTimerMenu && (
+  <View
+    style={{
+      marginTop: 14,
+      borderWidth: 1,
+      borderColor: '#3A3426',
+      borderRadius: 16,
+      padding: 18,
+    }}
+  >
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontWeight: '900',
+        letterSpacing: 1,
+        marginBottom: 12,
+      }}
+    >
+      HOW LONG DO YOU WANT?
+    </Text>
+
+    <TextInput
+      value={timerMinutes}
+      onChangeText={setTimerMinutes}
+      keyboardType="number-pad"
+      placeholder="Minutes"
+      placeholderTextColor="#777"
+      style={{
+        borderWidth: 1,
+        borderColor: '#3A3426',
+        borderRadius: 12,
+        padding: 14,
+        color: '#FFFFFF',
+        fontSize: 18,
+        marginBottom: 12,
+      }}
+    />
+
+    <Pressable
+      style={s.startMoveButton}
+      onPress={() => {
+        const minutes = Math.max(1, Number(timerMinutes) || 1);
+
+        setSecondsLeft(minutes * 60);
+        setMoveStarted(true);
+        setTimerRunning(true);
+        setShowTimerMenu(false);
+      }}
+    >
+      <Text style={s.startMoveText}>START TIMER</Text>
+    </Pressable>
+  </View>
+)}
 
               <Pressable onPress={() => setShowReminderMenu(true)} style={{ marginTop: 14, borderWidth: 1, borderColor: '#D8B24A', borderRadius: 16, paddingVertical: 16, alignItems: 'center' }}>
-                <Text style={{ color: '#D8B24A', fontWeight: '900' }}>🔔 SET REMINDER</Text>
+                <Text style={{ color: '#D8B24A', fontWeight: '900' }}>🔔 SET REMINDER </Text>
               </Pressable>
 
-              {showReminderMenu && (
+            {showReminderMenu && (
                 <View style={s.reminderMenu}>
                   <Text style={s.reminderTitle}>WHEN SHOULD I REMIND YOU?</Text>
 
@@ -335,7 +706,7 @@ export default function GoalDetail() {
                       </Pressable>
                     </View>
                   )}
-
+                
                   {showScheduleBuilder && (
                     <View style={s.scheduleBuilder}>
                       <Text style={s.sectionTitle}>CHOOSE DAYS</Text>
@@ -351,7 +722,59 @@ export default function GoalDetail() {
                           );
                         })}
                       </View>
+{showTimerMenu && (
+  <View
+    style={{
+      marginTop: 14,
+      borderWidth: 1,
+      borderColor: '#3A3426',
+      borderRadius: 16,
+      padding: 18,
+    }}
+  >
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontWeight: '900',
+        letterSpacing: 1,
+        marginBottom: 12,
+      }}
+    >
+      HOW LONG DO YOU WANT?
+    </Text>
 
+    <TextInput
+      value={timerMinutes}
+      onChangeText={setTimerMinutes}
+      keyboardType="number-pad"
+      placeholder="Minutes"
+      placeholderTextColor="#777"
+      style={{
+        borderWidth: 1,
+        borderColor: '#3A3426',
+        borderRadius: 12,
+        padding: 14,
+        color: '#FFFFFF',
+        fontSize: 18,
+        marginBottom: 12,
+      }}
+    />
+
+    <Pressable
+      style={s.startMoveButton}
+      onPress={() => {
+        const minutes = Math.max(1, Number(timerMinutes) || 1);
+
+        setSecondsLeft(minutes * 60);
+        setMoveStarted(true);
+        setTimerRunning(true);
+        setShowTimerMenu(false);
+      }}
+    >
+      <Text style={s.startMoveText}>START TIMER</Text>
+    </Pressable>
+  </View>
+)}
                       <Pressable onPress={() => { setPendingTime(new Date()); setShowCustomPicker(true); }} style={{ marginTop: 12, backgroundColor: '#111111', borderWidth: 1, borderColor: '#3A321F', paddingVertical: 12, alignItems: 'center', borderRadius: 12 }}>
                         <Text style={{ color: '#D8B24A', fontWeight: '900' }}>+ ADD TIME</Text>
                       </Pressable>
@@ -386,11 +809,266 @@ export default function GoalDetail() {
               )}
 
             </>
-          ) : (
-            <Text style={{ color: '#8E8E93' }}>No pending moves</Text>
           )}
-        </View>
+           <View
+  style={{
+    width: '100%',
+    marginTop: 8,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#D8B24A',
+    borderRadius: 18,
+    backgroundColor: '#111111',
+  }}
+>
+  <Text
+    style={{
+      color: '#D8B24A',
+      fontSize: 13,
+      fontWeight: '900',
+      letterSpacing: 2,
+      textAlign: 'center',
+    }}
+  >
+    ACHIEVEMENT COMPLETE
+  </Text>
 
+  <Text
+    style={{
+      color: '#FFFFFF',
+      fontSize: 26,
+      fontWeight: '900',
+      textAlign: 'center',
+      marginTop: 12,
+    }}
+  >
+    {goal?.title}
+  </Text>
+
+  <Text
+    style={{
+      color: '#8E8E93',
+      fontSize: 14,
+      textAlign: 'center',
+      marginTop: 8,
+      marginBottom: 20,
+    }}
+  >
+    You said you would do it — and did.
+  </Text>
+
+  <Pressable
+    onPress={shareAchievement}
+    style={{
+      backgroundColor: '#D8B24A',
+      borderRadius: 14,
+      paddingVertical: 16,
+      alignItems: 'center',
+      marginBottom: 12,
+    }}
+  >
+    <Text
+      style={{
+        color: '#080808',
+        fontWeight: '900',
+        fontSize: 15,
+        letterSpacing: 1,
+      }}
+    >
+      SHARE ACHIEVEMENT
+    </Text>
+  </Pressable>
+
+  <Pressable
+    onPress={renewGoal}
+    style={{
+      borderWidth: 1,
+      borderColor: '#D8B24A',
+      borderRadius: 14,
+      paddingVertical: 16,
+      alignItems: 'center',
+      marginBottom: 12,
+    }}
+  >
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontWeight: '900',
+        fontSize: 15,
+        letterSpacing: 1,
+      }}
+    >
+      RENEW GOAL
+    </Text>
+  </Pressable>
+  <Pressable
+    onPress={archiveGoal}
+    style={{
+      borderWidth: 1,
+      borderColor: '#3A3A3C',
+      borderRadius: 14,
+      paddingVertical: 16,
+      alignItems: 'center',
+    }}
+  >
+    <Text
+      style={{
+        color: '#E5E5E5',
+        fontWeight: '800',
+        fontSize: 14,
+        letterSpacing: 1,
+      }}
+    >
+      ARCHIVE ACHIEVEMENT
+    </Text>
+  </Pressable>
+</View>
+          
+        </View>
+{milestones.length > 0 ? (
+  <View
+    style={{
+      marginTop: 20,
+      padding: 20,
+      borderWidth: 1,
+      borderColor: '#3A3426',
+      borderRadius: 18,
+      backgroundColor: '#111111',
+    }}
+  >
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontSize: 16,
+        fontWeight: '900',
+        letterSpacing: 2,
+        marginBottom: 20,
+      }}
+    >
+      YOUR PATH
+    </Text>
+
+    {milestones.map((milestone, index) => {
+      const isCurrent = index === 0;
+      const isLast = index === milestones.length - 1;
+
+      return (
+        <View
+          key={milestone.id}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'flex-start',
+          }}
+        >
+          <View
+            style={{
+              width: 34,
+              alignItems: 'center',
+            }}
+          >
+            <View
+              style={{
+                width: 18,
+                height: 18,
+                borderRadius: 9,
+                borderWidth: 2,
+                borderColor: isCurrent ? '#D8B24A' : '#6E6E73',
+                backgroundColor: isCurrent ? '#D8B24A' : 'transparent',
+              }}
+            />
+
+            {!isLast ? (
+              <View
+                style={{
+                  width: 2,
+                  flex: 1,
+                  minHeight: 58,
+                  backgroundColor: '#3A3426',
+                  marginTop: 4,
+                }}
+              />
+            ) : null}
+          </View>
+
+          <View
+            style={{
+              flex: 1,
+              paddingBottom: isLast ? 0 : 22,
+            }}
+          >
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 10,
+              }}
+            >
+              <Text
+                style={{
+                  flex: 1,
+                  color: isCurrent ? '#FFFFFF' : '#B8B8BD',
+                  fontSize: 17,
+                  fontWeight: isCurrent ? '900' : '700',
+                }}
+              >
+                {milestone.title}
+              </Text>
+
+              {isCurrent ? (
+                <View
+                  style={{
+                    paddingHorizontal: 9,
+                    paddingVertical: 4,
+                    borderRadius: 999,
+                    backgroundColor: '#D8B24A',
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: '#000000',
+                      fontSize: 10,
+                      fontWeight: '900',
+                      letterSpacing: 0.8,
+                    }}
+                  >
+                    CURRENT
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+
+            {milestone.description ? (
+              <Text
+                style={{
+                  color: '#8E8E93',
+                  fontSize: 14,
+                  marginTop: 6,
+                  lineHeight: 20,
+                }}
+              >
+                {milestone.description}
+              </Text>
+            ) : null}
+
+            {milestone.target_date ? (
+              <Text
+                style={{
+                  color: isCurrent ? '#D8B24A' : '#8E8E93',
+                  fontSize: 13,
+                  marginTop: 7,
+                  fontWeight: isCurrent ? '700' : '500',
+                }}
+              >
+                Target: {new Date(milestone.target_date).toLocaleDateString()}
+              </Text>
+            ) : null}
+          </View>
+        </View>
+      );
+    })}
+  </View>
+) : null}
       </ScrollView>
 
       <Modal visible={showScheduleSavedModal} transparent animationType="fade" onRequestClose={() => setShowScheduleSavedModal(false)}>

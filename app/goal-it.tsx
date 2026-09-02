@@ -209,6 +209,7 @@ const milestoneDrafts = buildMilestoneDrafts({
       title: name,
       status: 'pending',
       estimated_minutes: min,
+      type: min >= 10 ? 'timed' : 'task',
       position: i,
     
     }));
@@ -222,7 +223,25 @@ const milestoneDrafts = buildMilestoneDrafts({
       Alert.alert('Could not build plan', actionError.message);
       return;
     }
+const milestoneRows = milestoneDrafts.map((milestone) => ({
+  user_id: user.id,
+  goal_id: goal.id,
+  title: milestone.title,
+  description: milestone.description ?? null,
+  weight: milestone.weight,
+  position: milestone.position,
+  status: 'pending',
+}));
 
+const { error: milestoneError } = await supabase
+  .from('milestones')
+  .insert(milestoneRows);
+
+if (milestoneError) {
+  setSaving(false);
+  Alert.alert('Could not build milestones', milestoneError.message);
+  return;
+}
     await supabase.from('events').insert({
       user_id: user.id,
       event_type: 'goal_created',

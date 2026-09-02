@@ -9,6 +9,7 @@ import {
   StyleSheet,
   Text,
   View,
+  Alert
 } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { supabase } from '@/lib/supabase';
@@ -52,11 +53,13 @@ const nextMove = primaryGoal
       description:
         primaryAction?.title ??
         'Choose the next concrete action that moves this goal forward.',
-      button: 'START THIS MOVE',
+      type: 'task' as const,
+      button: 'MARK COMPLETE',
     }
   : {
       title: 'Set Your First Goal',
       description: 'Create a goal so GOAL’D IN can guide your next move.',
+      type: 'detail' as const,
       button: 'GOAL IT',
     };
   const loadCapacity = useCallback(async () => {
@@ -172,7 +175,24 @@ const chooseCapacity = useCallback(
   }
 
   const hour = new Date().getHours();
+const completeNextMove = async () => {
+  if (!primaryAction) {
+    router.push('/goal-it' as any);
+    return;
+  }
 
+  const { error } = await supabase
+    .from('actions')
+    .update({ status: 'completed' })
+    .eq('id', primaryAction.id);
+
+  if (error) {
+    Alert.alert('Could not complete move', error.message);
+    return;
+  }
+
+  await load({ silent: true });
+};
   const greeting =
     hour < 12
       ? 'Good morning'
@@ -262,126 +282,38 @@ const chooseCapacity = useCallback(
           </Pressable>
         </View>
 <View style={s.capacityRow}>
-
-</View>
-{/* NEXT MOVE */}
-<View
-  style={{
-    marginTop: 18,
-    borderWidth: 1,
-    borderColor: GOLD,
-    backgroundColor: '#121212',
-    borderRadius: 22,
-    padding: 20,
-  }}
+{/* GOAL IT */}
+        <PremiumPressable
+  style={s.goalItButton}
+  haptic="heavy"
+  goldGlow
+  onPress={() => router.push('/goal-it')}
 >
-  <Text
-    style={{
-      color: GOLD,
-      fontSize: 12,
-      fontWeight: '800',
-      letterSpacing: 2,
-      marginBottom: 10,
-    }}
-  >
-    NEXT MOVE
-  </Text>
+  <View style={s.goalItButtonInner}>
+    <View style={s.goalItPlus}>
+      <Text style={s.goalItPlusText}>+</Text>
+    </View>
 
-  <Text
-    style={{
-      color: '#FFFFFF',
-      fontSize: 22,
-      fontWeight: '800',
-      marginBottom: 8,
-    }}
-  >
-    {nextMove.title}
-  </Text>
+    <Text style={s.goalItButtonText}>GOAL IT</Text>
 
-  <Text
-    style={{
-      color: '#B8B8B8',
-      fontSize: 15,
-      lineHeight: 22,
-      marginBottom: 18,
-    }}
-  >
-    {nextMove.description}
-  </Text>
+    <Text style={s.goalItChevron}>›</Text>
+  </View>
+</PremiumPressable>
 
-  <Pressable
-    onPress={() => {
-  if (primaryGoal) {
-    router.push(`/goal/${primaryGoal.id}` as any);
-  } else {
-    router.push('/goal-it' as any);
-  }
-}}
-    style={{
-      backgroundColor: GOLD,
-      borderRadius: 16,
-      paddingVertical: 14,
-      alignItems: 'center',
-    }}
-  >
-    <Text
-      style={{
-        color: '#080808',
-        fontSize: 14,
-        fontWeight: '900',
-        letterSpacing: 1,
-      }}
-    >
-      {nextMove.button}
-    </Text>
-  </Pressable>
 </View>
+
 <Pressable
   onPress={() => router.push('/nutrition-plan-v2' as any)}
-  style={{
-    marginTop: 14,
-    borderWidth: 1,
-    borderColor: '#705A20',
-    backgroundColor: '#121009',
-    borderRadius: 22,
-    padding: 18,
-  }}
+  style={({ pressed }) => [
+    s.mealPlanButton,
+    pressed && { opacity: 0.7 },
+  ]}
 >
-  <Text
-    style={{
-      color: '#D8B24A',
-      fontSize: 10,
-      fontWeight: '900',
-      letterSpacing: 1.4,
-    }}
-  >
-    PLAN · RESOURCES
-  </Text>
-
-  <Text
-    style={{
-      color: '#F4F1E8',
-      fontSize: 19,
-      fontWeight: '900',
-      marginTop: 5,
-    }}
-  >
-    Nutrition + Shopping
-  </Text>
-
-  <Text
-    style={{
-      color: '#9C9A92',
-      fontSize: 13,
-      lineHeight: 19,
-      marginTop: 5,
-    }}
-  >
-    Today's meals, grocery budget, prep and the next move.
-  </Text>
+  <Text style={s.mealPlanIcon}>🍴</Text>
+  <Text style={s.mealPlanText}>MEAL{"\n"}PLAN</Text>
 </Pressable>
 
-{/* MY GOALS */}
+
         {/* MY GOALS */}
         <View style={s.sectionHeader}>
           <Text style={s.sectionTitle}>MY GOALS</Text>
@@ -393,12 +325,9 @@ const chooseCapacity = useCallback(
 
         {goalData.length ? (
           <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={s.goalRow}
-            snapToInterval={238}
-            decelerationRate="fast"
-          >
+  contentContainerStyle={s.goalRow}
+  showsVerticalScrollIndicator={false}
+>
             {goalData.map(({ goal, progress, nextMove }, index) => (
               <Pressable
                 key={goal.id}
@@ -418,7 +347,7 @@ const chooseCapacity = useCallback(
 
 <CircularProgress
   progress={progress}
-  size={84}
+  size={72}
   strokeWidth={7}
   label=""
 
@@ -464,24 +393,7 @@ const chooseCapacity = useCallback(
           </Pressable>
         )}
 
-        {/* GOAL IT */}
-        <PremiumPressable
-  style={s.goalItButton}
-  haptic="medium"
-  goldGlow
-  onPress={() => router.push('/goal-it')}
->
-  <View style={s.goalItButtonInner}>
-    <View style={s.goalItPlus}>
-      <Text style={s.goalItPlusText}>+</Text>
-    </View>
-
-    <Text style={s.goalItButtonText}>GOAL IT</Text>
-
-    <Text style={s.goalItChevron}>›</Text>
-  </View>
-</PremiumPressable>
-
+        
         {/* IDEA */}
         <Pressable
           style={({ pressed }) => [
@@ -802,26 +714,24 @@ const s = StyleSheet.create({
 
   /* intentionally short cards */
   goalCard: {
-    width: 226,
-    height: 238,
-    padding: 16,
-    backgroundColor: CARD,
-    borderRadius: 23,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.18,
-    shadowRadius: 18,
-    elevation: 7,
-  },
+  width: '100%',
+  minHeight: 132,
+  padding: 15,
+  backgroundColor: CARD,
+  borderRadius: 22,
+  borderWidth: 1,
+  borderColor: 'rgba(255,255,255,0.1)',
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 8 },
+  shadowOpacity: 0.16,
+  shadowRadius: 16,
+  elevation: 6,
+  marginBottom: 14,
+},
 
   goalCardFirst: {
-    borderColor: 'rgba(255,255,255,0.1)',
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-  },
-
+  borderColor: 'rgba(216,178,74,0.45)',
+},
   goalTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -829,9 +739,9 @@ const s = StyleSheet.create({
   },
 
   goalMark: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     backgroundColor: '#18181B',
     borderWidth: 1,
     borderColor: '#242426',
@@ -866,19 +776,19 @@ const s = StyleSheet.create({
   },
 
   goalTitle: {
-    color: '#E5E5E5',
-    fontSize: 20,
-    lineHeight: 24,
-    fontWeight: '600',
-    marginTop: 14,
-    flexShrink: 1,
-  },
+  color: '#E5E5E5',
+  fontSize: 20,
+  lineHeight: 24,
+  fontWeight: '700',
+  marginTop: 0,
+  flexShrink: 1,
+},
 
   progressTrack: {
     height: 4,
     backgroundColor: '#18181B',
     borderRadius: 99,
-    overflow: 'hidden',
+    
     marginTop: 18,
   },
 
@@ -889,12 +799,12 @@ const s = StyleSheet.create({
   },
 
   nextRow: {
-    marginTop: 16,
+    marginTop: 8,
   },
 
   nextText: {
     color: '#8A8A8A',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
   },
 
@@ -1109,27 +1019,63 @@ const s = StyleSheet.create({
     marginTop: 3,
     letterSpacing: 1.5,
   },
+mealPlanButton: {
+  alignSelf: 'flex-end',
+  width: 78,
+  height: 78,
+  borderRadius: 39,
+  borderWidth: 1.5,
+  borderColor: GOLD_BRIGHT,
+  backgroundColor: '#0B0B0D',
+  alignItems: 'center',
+  justifyContent: 'center',
 
+  marginTop: 14,
+  marginRight: 24,
+  marginBottom: 24,
+},
+
+mealPlanIcon: {
+  fontSize: 18,
+  marginBottom: 2,
+},
+
+mealPlanText: {
+  color: GOLD_BRIGHT,
+  fontSize: 10,
+  fontWeight: '900',
+  letterSpacing: 1,
+  textAlign: 'center',
+  lineHeight: 12,
+},
   goalItButton: {
-    height: 58,
-    borderRadius: 18,
-    backgroundColor: '#121214',
-    marginTop: 22,
-    marginBottom: 12,
-    overflow: 'hidden',
-    shadowColor: GOLD_BRIGHT,
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.18,
-    shadowRadius: 22,
-    elevation: 10,
-  },
+  height: 82,
+  borderRadius: 22,
+  backgroundColor: GOLD_BRIGHT,
+  marginTop: 22,
+  marginBottom: 18,
 
+  borderWidth: 1,
+  borderColor: '#F3D56B',
+
+  shadowColor: GOLD_BRIGHT,
+  shadowOffset: { width: 0, height: 0 },
+  shadowOpacity: 0.5,
+  shadowRadius: 22,
+  elevation: 16,
+},
+goalItButtonText: {
+  fontSize: 26,
+  fontWeight: '900',
+  letterSpacing: 3,
+  color: '#090909',
+},
   goalItButtonInner: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 18,
-  },
+  flex: 1,
+  flexDirection: 'row',
+  alignItems: 'center',
+  paddingHorizontal: 22,
+},
 
   capacityRow: {
     paddingHorizontal: 24,
@@ -1278,38 +1224,28 @@ capacityDismissText: {
   letterSpacing: 1.6,
 },
   goalItPlus: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: GOLD,
-    backgroundColor: '#18181B',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
+  width: 48,
+  height: 48,
+  borderRadius: 24,
+  borderWidth: 1.5,
+  borderColor: '#090909',
+  alignItems: 'center',
+  justifyContent: 'center',
+  marginRight: 18,
+},
 
   goalItPlusText: {
-    color: GOLD_BRIGHT,
-    fontSize: 23,
-    lineHeight: 25,
-    fontWeight: '600',
-    marginTop: -1,
-  },
-
-  goalItButtonText: {
-    flex: 1,
-    color: GOLD_BRIGHT,
-    fontSize: 17,
-    fontWeight: '700',
-    letterSpacing: 1.4,
-  },
+  color: '#090909',
+  fontSize: 28,
+  fontWeight: '700',
+},
 
   goalItChevron: {
-    color: GOLD_BRIGHT,
-    fontSize: 30,
-    fontWeight: '300',
-    lineHeight: 30,
-  },
+  color: '#090909',
+  fontSize: 30,
+  fontWeight: '700',
+},
+
+  
   
 });
