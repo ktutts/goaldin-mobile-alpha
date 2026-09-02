@@ -52,6 +52,7 @@ export default function GoalDetail() {
   const [showScheduleSavedModal, setShowScheduleSavedModal] = useState(false);
   const [showTimerMenu, setShowTimerMenu] = useState(false);
   const [timerMinutes, setTimerMinutes] = useState('10');
+  const [coachMessage, setCoachMessage] = useState<string | null>(null);
   const deleteGoal = () => {
   if (!goalId) return;
  
@@ -174,7 +175,18 @@ const completeMove = async (actionId: string) => {
         : action
     )
   );
+const completedMove = actions.find((action) => action.id === actionId);
+const upcomingMove = remainingPending[0];
 
+if (upcomingMove) {
+  setCoachMessage(
+    `Nice work. ${completedMove?.title ?? 'That move'} is complete. Next up: ${upcomingMove.title}`
+  );
+} else {
+  setCoachMessage(
+    `Nice work. ${completedMove?.title ?? 'That move'} is complete. Goal complete.`
+  );
+}
   if (remainingPending.length === 0 && goalId) {
     const { error: goalError } = await supabase
       .from('goals')
@@ -525,6 +537,41 @@ if (!Notifications) return;
         </View>
 
         <View style={s.nextMoveCard}>
+          {coachMessage && (
+  <View
+    style={{
+      marginBottom: 16,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: '#D8B24A',
+      borderRadius: 16,
+      backgroundColor: '#111111',
+    }}
+  >
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontSize: 12,
+        fontWeight: '900',
+        letterSpacing: 2,
+        marginBottom: 8,
+      }}
+    >
+      GOAL'D IN COACH
+    </Text>
+
+    <Text
+      style={{
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontWeight: '700',
+        lineHeight: 23,
+      }}
+    >
+      {coachMessage}
+    </Text>
+  </View>
+)}  
           <Text style={s.nextMoveLabel}>⚡  YOUR NEXT MOVE</Text>
 
           {nextPending ? (
@@ -810,6 +857,7 @@ if (!Notifications) return;
 
             </>
           )}
+          {goal?.status === 'completed' && (
            <View
   style={{
     width: '100%',
@@ -923,7 +971,7 @@ if (!Notifications) return;
     </Text>
   </Pressable>
 </View>
-          
+          )}    
         </View>
 {milestones.length > 0 ? (
   <View
