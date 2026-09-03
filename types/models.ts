@@ -19,6 +19,7 @@ planning_mode?: PlanningMode | null;
 export type Action = {
   id: string;
   goal_id: string;
+  milestone_id?: string | null;
   user_id: string;
   title: string;
   description: string | null;
@@ -27,8 +28,6 @@ export type Action = {
   type?: 'task' | 'timed' | 'scheduled' | 'milestone';
   position: number;
   completed_at: string | null;
-
-  milestone_id?: string | null;
   milestone_progress?: number | null;
 };
 

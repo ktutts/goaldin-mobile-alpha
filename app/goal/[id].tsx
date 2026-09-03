@@ -182,35 +182,143 @@ if (upcomingMove) {
   setCoachMessage(
     `Nice work. ${completedMove?.title ?? 'That move'} is complete. Next up: ${upcomingMove.title}`
   );
-} else {
-  setCoachMessage(
-    `Nice work. ${completedMove?.title ?? 'That move'} is complete. Goal complete.`
-  );
-}
-  if (remainingPending.length === 0 && goalId) {
-    const { error: goalError } = await supabase
-      .from('goals')
-      .update({
-  status: 'completed',
-  completed_at: new Date().toISOString(),
-})
-      .eq('id', goalId);
+} else if (goalId) {
+  const currentMilestone =
+    milestones.find((m) => m.id === completedMove?.milestone_id) ??
+    milestones.find((m) => m.status === 'active');
 
-    if (goalError) {
-      Alert.alert('Move completed', 'The move was completed, but the goal could not be closed.');
+  const nextMilestone = currentMilestone
+    ? [...milestones]
+        .filter(
+          (m) =>
+            m.position > currentMilestone.position &&
+            m.status !== 'completed'
+        )
+        .sort((a, b) => a.position - b.position)[0]
+    : undefined;
+
+  // There is another milestone: finish this stage and advance.
+  if (currentMilestone && nextMilestone) {
+    const { error: completeMilestoneError } = await supabase
+      .from('milestones')
+      .update({
+        status: 'completed',
+        completed_at: new Date().toISOString(),
+      })
+      .eq('id', currentMilestone.id);
+
+    if (completeMilestoneError) {
+      Alert.alert(
+        'Move completed',
+        'The move was completed, but the milestone could not be advanced.'
+      );
       return;
     }
 
-    setGoal((current) =>
-  current
-    ? {
-        ...current,
-        status: 'completed',
-      }
-    : current
-);
+    const { error: activateMilestoneError } = await supabase
+      .from('milestones')
+      .update({ status: 'active' })
+      .eq('id', nextMilestone.id);
 
-return;
+    if (activateMilestoneError) {
+      Alert.alert(
+        'Milestone completed',
+        'The next milestone could not be activated.'
+      );
+      return;
+    }
+
+    const userId = completedMove?.user_id;
+
+    if (!userId) {
+      Alert.alert(
+        'Milestone advanced',
+        'Could not create the next move.'
+      );
+      return;
+    }
+
+    const { data: newMove, error: newMoveError } = await supabase
+      .from('actions')
+      .insert({
+        user_id: userId,
+        goal_id: goalId,
+        milestone_id: nextMilestone.id,
+        title: nextMilestone.title,
+        status: 'pending',
+        estimated_minutes: 10,
+        type: 'task',
+        position: actions.length,
+      })
+      .select()
+      .single();
+
+    if (newMoveError || !newMove) {
+      Alert.alert(
+        'Milestone advanced',
+        'The next milestone is active, but its first move could not be created.'
+      );
+      return;
+    }
+
+    setMilestones((current) =>
+      current.map((m) =>
+        m.id === currentMilestone.id
+          ? { ...m, status: 'completed' }
+          : m.id === nextMilestone.id
+            ? { ...m, status: 'active' }
+            : m
+      )
+    );
+
+    setActions((current) => [...current, newMove as Action]);
+
+    setCoachMessage(
+      `Milestone complete. Next up: ${nextMilestone.title}`
+    );
+
+    return;
+  }
+
+  // No next milestone means the whole goal is actually finished.
+  const { error: goalError } = await supabase
+    .from('goals')
+    .update({
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+    })
+    .eq('id', goalId);
+
+  if (goalError) {
+    Alert.alert(
+      'Move completed',
+      'The final milestone was completed, but the goal could not be closed.'
+    );
+    return;
+  }
+
+  if (currentMilestone) {
+    await supabase
+      .from('milestones')
+      .update({
+        status: 'completed',
+        completed_at: new Date().toISOString(),
+      })
+      .eq('id', currentMilestone.id);
+  }
+
+  setGoal((current) =>
+    current
+      ? {
+          ...current,
+          status: 'completed',
+        }
+      : current
+  );
+
+  setCoachMessage(
+    `Nice work. ${completedMove?.title ?? 'That move'} is complete. Goal complete.`
+  );
 }
 };
   useEffect(() => {
@@ -857,6 +965,7 @@ if (!Notifications) return;
 
             </>
           )}
+          </View>
           {goal?.status === 'completed' && (
            <View
   style={{
@@ -971,8 +1080,8 @@ if (!Notifications) return;
     </Text>
   </Pressable>
 </View>
-          )}    
-        </View>
+              
+    )}
 {milestones.length > 0 ? (
   <View
     style={{

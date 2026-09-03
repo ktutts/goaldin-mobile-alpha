@@ -203,43 +203,48 @@ const milestoneDrafts = buildMilestoneDrafts({
       return;
     }
 
-    const acts = draftActions(cleanTitle).map(([name, min], i) => ({
-      user_id: user.id,
-      goal_id: goal.id,
-      title: name,
-      status: 'pending',
-      estimated_minutes: min,
-      type: min >= 10 ? 'timed' : 'task',
-      position: i,
-    
-    }));
-
-    const { error: actionError } = await supabase
-      .from('actions')
-      .insert(acts);
-
-    if (actionError) {
-      setSaving(false);
-      Alert.alert('Could not build plan', actionError.message);
-      return;
-    }
-const milestoneRows = milestoneDrafts.map((milestone) => ({
+   const milestoneRows = milestoneDrafts.map((milestone) => ({
   user_id: user.id,
   goal_id: goal.id,
   title: milestone.title,
   description: milestone.description ?? null,
   weight: milestone.weight,
   position: milestone.position,
-  status: 'pending',
+  status: milestone.position === 0 ? 'active' : 'pending',
 }));
 
-const { error: milestoneError } = await supabase
+const { data: createdMilestones, error: milestoneError } = await supabase
   .from('milestones')
-  .insert(milestoneRows);
+  .insert(milestoneRows)
+  .select('id, position, title, status');
 
 if (milestoneError) {
   setSaving(false);
   Alert.alert('Could not build milestones', milestoneError.message);
+  return;
+}
+
+const firstMilestone = [...(createdMilestones ?? [])]
+  .sort((a, b) => a.position - b.position)[0];
+
+const acts = draftActions(cleanTitle).map(([name, min], i) => ({
+  user_id: user.id,
+  goal_id: goal.id,
+  milestone_id: firstMilestone?.id ?? null,
+  title: name,
+  status: 'pending',
+  estimated_minutes: min,
+  type: min >= 10 ? 'timed' : 'task',
+  position: i,
+}));
+
+const { error: actionError } = await supabase
+  .from('actions')
+  .insert(acts);
+
+if (actionError) {
+  setSaving(false);
+  Alert.alert('Could not build plan', actionError.message);
   return;
 }
     await supabase.from('events').insert({
