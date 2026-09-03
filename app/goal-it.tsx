@@ -227,7 +227,7 @@ if (milestoneError) {
 const firstMilestone = [...(createdMilestones ?? [])]
   .sort((a, b) => a.position - b.position)[0];
 
-const acts = draftActions(cleanTitle).map(([name, min], i) => ({
+const acts = draftActions(cleanTitle).slice(0, 1).map(([name, min], i) => ({
   user_id: user.id,
   goal_id: goal.id,
   milestone_id: firstMilestone?.id ?? null,

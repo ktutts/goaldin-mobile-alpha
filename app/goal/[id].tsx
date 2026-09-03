@@ -1106,7 +1106,7 @@ if (!Notifications) return;
     </Text>
 
     {milestones.map((milestone, index) => {
-      const isCurrent = index === 0;
+      const isCurrent = milestone.status === 'active';
       const isLast = index === milestones.length - 1;
 
       return (
