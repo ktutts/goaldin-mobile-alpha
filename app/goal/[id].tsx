@@ -114,13 +114,16 @@ const archiveGoal = async () => {
 const renewGoal = async () => {
   if (!goal) return;
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   if (!user) {
     Alert.alert('Sign in required', 'Please sign in and try again.');
     return;
   }
 
+  // Create the new active goal
   const { data: newGoal, error } = await supabase
     .from('goals')
     .insert({
@@ -139,9 +142,88 @@ const renewGoal = async () => {
     return;
   }
 
+  // Get the old path
+  const { data: oldMilestones, error: oldMilestoneError } = await supabase
+    .from('milestones')
+    .select('*')
+    .eq('goal_id', goal.id)
+    .order('position', { ascending: true });
+
+  if (oldMilestoneError) {
+    Alert.alert('Could not renew path', oldMilestoneError.message);
+    return;
+  }
+
+  // Rebuild the path for the new goal
+  let newMilestones: any[] = [];
+
+  if (oldMilestones?.length) {
+    const milestoneRows = oldMilestones.map((milestone) => ({
+      user_id: user.id,
+      goal_id: newGoal.id,
+      title: milestone.title,
+      description: milestone.description ?? null,
+      weight: milestone.weight,
+      position: milestone.position,
+      status: milestone.position === 0 ? 'active' : 'pending',
+    }));
+
+    const { data, error: milestoneError } = await supabase
+      .from('milestones')
+      .insert(milestoneRows)
+      .select('id, position, title, status');
+
+    if (milestoneError) {
+      Alert.alert('Could not renew path', milestoneError.message);
+      return;
+    }
+
+    newMilestones = data ?? [];
+  }
+
+  const firstNewMilestone = [...newMilestones].sort(
+    (a, b) => a.position - b.position
+  )[0];
+
+  // Get the original first move
+  const { data: oldActions, error: oldActionError } = await supabase
+    .from('actions')
+    .select('*')
+    .eq('goal_id', goal.id)
+    .order('position', { ascending: true })
+    .limit(1);
+
+  if (oldActionError) {
+    Alert.alert('Could not renew next move', oldActionError.message);
+    return;
+  }
+
+  const oldFirstMove = oldActions?.[0];
+
+  // Recreate a fresh first move
+  if (oldFirstMove) {
+    const { error: actionError } = await supabase
+      .from('actions')
+      .insert({
+        user_id: user.id,
+        goal_id: newGoal.id,
+        milestone_id: firstNewMilestone?.id ?? null,
+        title: oldFirstMove.title,
+        status: 'pending',
+        estimated_minutes: oldFirstMove.estimated_minutes,
+        type: oldFirstMove.type,
+        position: 0,
+      });
+
+    if (actionError) {
+      Alert.alert('Could not renew next move', actionError.message);
+      return;
+    }
+  }
+
   Alert.alert(
     'Goal Renewed',
-    'A new active cycle has been created while this achievement stays in your history.',
+    'A fresh active cycle is ready while this achievement stays in your history.',
     [
       {
         text: 'OPEN NEW GOAL',
@@ -168,17 +250,18 @@ const completeMove = async (actionId: string) => {
     (action) => action.id !== actionId && action.status === 'pending'
   );
 
-  setActions((current) =>
-    current.map((action) =>
-      action.id === actionId
-        ? { ...action, status: 'completed' }
-        : action
-    )
-  );
+ 
 const completedMove = actions.find((action) => action.id === actionId);
 const upcomingMove = remainingPending[0];
 
 if (upcomingMove) {
+  setActions((current) =>
+  current.map((action) =>
+    action.id === actionId
+      ? { ...action, status: 'completed' as const }
+      : action
+  )
+);
   setCoachMessage(
     `Nice work. ${completedMove?.title ?? 'That move'} is complete. Next up: ${upcomingMove.title}`
   );
@@ -271,7 +354,14 @@ if (upcomingMove) {
       )
     );
 
-    setActions((current) => [...current, newMove as Action]);
+   setActions((current) => [
+  ...current.map((action) =>
+    action.id === actionId
+      ? { ...action, status: 'completed' as const }
+      : action
+  ),
+  newMove as Action,
+]);
 
     setCoachMessage(
       `Milestone complete. Next up: ${nextMilestone.title}`
@@ -279,7 +369,13 @@ if (upcomingMove) {
 
     return;
   }
-
+setActions((current) =>
+  current.map((action) =>
+    action.id === actionId
+      ? { ...action, status: 'completed' as const }
+      : action
+  )
+);
   // No next milestone means the whole goal is actually finished.
   const { error: goalError } = await supabase
     .from('goals')
@@ -306,7 +402,15 @@ if (upcomingMove) {
       })
       .eq('id', currentMilestone.id);
   }
-
+if (currentMilestone) {
+  setMilestones((current) =>
+    current.map((m) =>
+      m.id === currentMilestone.id
+        ? { ...m, status: 'completed' as const }
+        : m
+    )
+  );
+}
   setGoal((current) =>
     current
       ? {
@@ -475,10 +579,12 @@ if (!Notifications) return;
       for (const time of times) {
         await Notifications.scheduleNotificationAsync({
           content: {
-            title: "GOAL'D IN · NEXT MOVE",
-            body: actions[0]?.title ? `Time for ${actions[0].title}. Stay ready.` : 'Time for your next move. Stay ready.',
-            sound: true,
-          },
+  title: `GOAL'D IN — ${goal?.title ?? 'YOUR GOAL'}`,
+  body:
+  nextPending?.title ??
+  `Time to make progress on ${goal?.title ?? 'your goal'}.`,
+  sound: true,
+},
           trigger: { type: Notifications.SchedulableTriggerInputTypes.DAILY, hour: time.hour, minute: time.minute }
         });
       }
@@ -534,11 +640,13 @@ if (!Notifications) return;
           }
 
           const id = await Notifications.scheduleNotificationAsync({
-            content: {
-              title: "GOAL'D IN · NEXT MOVE",
-              body: nextPending?.title || goal?.title || 'Time for your next move',
-              sound: true,
-            },
+           content: {
+  title: `GOAL'D IN — ${goal?.title ?? 'YOUR GOAL'}`,
+  body:
+    nextPending?.title ??
+    `Time to ${goal?.title ?? 'your goal'}.`,
+  sound: true,
+},
             trigger: {
               type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
               weekday,
@@ -632,11 +740,15 @@ if (!Notifications) return;
 </Text>
           <Text style={s.title}>{goal?.title}</Text>
           <CircularProgress
-  progress={Math.round(
-    (actions.filter(a => a.status === 'completed').length /
-      (actions.length || 1)) *
-      100
-  )}
+ progress={
+  milestones.length > 0
+    ? Math.round(
+        (milestones.filter((m) => m.status === 'completed').length /
+          milestones.length) *
+          100
+      )
+    : 0
+}
   size={160}
   strokeWidth={12}
   label={!nextPending ? "GOAL'D IN ✓" : "IN PROGRESS"}
@@ -693,31 +805,60 @@ if (!Notifications) return;
 >
   <Text style={s.startMoveText}>MARK COMPLETE</Text>
 </Pressable>
-</>
-          ):(
-            <>
-<Pressable
-  onPress={() => setShowTimerMenu(true)}
-  style={{
-    marginTop: 14,
-    borderWidth: 1,
-    borderColor: '#D8B24A',
-    borderRadius: 16,
-    paddingVertical: 16,
-    alignItems: 'center',
-  }}
->
-  <Text
+{showTimerMenu && (
+  <View
     style={{
-      color: '#D8B24A',
-      fontWeight: '900',
-      letterSpacing: 1,
+      marginTop: 14,
+      borderWidth: 1,
+      borderColor: '#3A3426',
+      borderRadius: 16,
+      padding: 18,
     }}
   >
-    ⏱ SET TIMER
-  </Text>
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontWeight: '900',
+        letterSpacing: 1,
+        marginBottom: 12,
+      }}
+    >
+      HOW LONG DO YOU WANT?
+    </Text>
 
-    {moveStarted && (
+    <TextInput
+      value={timerMinutes}
+      onChangeText={setTimerMinutes}
+      keyboardType="number-pad"
+      placeholder="Minutes"
+      placeholderTextColor="#777"
+      style={{
+        borderWidth: 1,
+        borderColor: '#3A3426',
+        borderRadius: 12,
+        padding: 14,
+        color: '#FFFFFF',
+        fontSize: 18,
+        marginBottom: 12,
+      }}
+    />
+
+    <Pressable
+      style={s.startMoveButton}
+      onPress={() => {
+        const minutes = Math.max(1, Number(timerMinutes) || 1);
+
+        setSecondsLeft(minutes * 60);
+        setMoveStarted(true);
+        setTimerRunning(true);
+        //setShowTimerMenu(false);
+      }}
+    >
+      <Text style={s.startMoveText}>START TIMER</Text>
+    </Pressable>
+  </View>
+)}
+{moveStarted && (
   <View
     style={{
       marginTop: 14,
@@ -783,8 +924,115 @@ if (!Notifications) return;
 </Pressable>
   </View>
 )}
+<Pressable
+  style={s.secondaryActionButton}
+  onPress={() => {
+    setShowTimerMenu(true)}}
+>
+  <Text style={s.secondaryActionText}>⏱ SET TIMER</Text>
+</Pressable>
 
-    
+<Pressable
+  style={s.secondaryActionButton}
+  onPress={() => {
+  setShowReminderMenu(true);
+  setShowScheduleBuilder(true);
+}}
+>
+  <Text style={s.secondaryActionText}>🔔 SET REMINDER</Text>
+</Pressable>
+{showReminderMenu && (
+                <View style={s.reminderMenu}>
+                  <Text style={s.reminderTitle}>WHEN SHOULD I REMIND YOU?</Text>
+
+                  <Pressable onPress={() => setShowScheduleBuilder(true)} style={s.primaryButton}><Text style={s.primaryButtonText}>MAKE A SCHEDULE</Text></Pressable>
+                  <Pressable onPress={() => { void scheduleSuggestedSchedule(); }} style={{ paddingVertical: 12 }}><Text style={{ color: '#D8B24A', fontWeight: '900' }}>USE SUGGESTED SCHEDULE</Text></Pressable>
+
+                  {savedSchedule && !showScheduleBuilder && (
+                    <View style={{ marginTop: 12 }}>
+                      <Text style={{ color: '#D8B24A', fontWeight: '900', marginBottom: 6 }}>SAVED SCHEDULE</Text>
+                      <Text style={{ color: '#FFFFFF', fontWeight: '900' }}>{savedSchedule.days.map((d)=>['S','M','T','W','T','F','S'][d-1]).join(' · ')}</Text>
+                      <Text style={{ color: '#FFFFFF', fontWeight: '900', marginTop: 6 }}>{savedSchedule.times.join(' · ')}</Text>
+                      <Pressable onPress={() => { setSelectedDays(savedSchedule.days.slice()); setSelectedTimes(savedSchedule.times.slice()); setShowScheduleBuilder(true); }} style={{ marginTop: 10 }}>
+                        <Text style={{ color: '#D8B24A', fontWeight: '900' }}>EDIT SCHEDULE</Text>
+                      </Pressable>
+                    </View>
+                  )}
+                
+                  {showScheduleBuilder && (
+                    <View style={s.scheduleBuilder}>
+                      <Text style={s.sectionTitle}>CHOOSE DAYS</Text>
+
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
+                        {['S','M','T','W','T','F','S'].map((label, idx) => {
+                          const dayNum = idx + 1; // 1..7
+                          const sel = selectedDays.includes(dayNum);
+                          return (
+                            <Pressable key={label + dayNum} onPress={() => setSelectedDays(p => p.includes(dayNum) ? p.filter(x=>x!==dayNum) : [...p, dayNum])} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: sel ? '#D8B24A' : '#3A321F', backgroundColor: sel ? '#D8B24A' : 'transparent', marginRight: 8, marginBottom: 8 }}>
+                              <Text style={{ color: sel ? '#0B0B0B' : '#D8B24A', fontWeight: '900' }}>{label}</Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+
+                      <Pressable onPress={() => { setPendingTime(new Date()); setShowCustomPicker(true); }} style={{ marginTop: 12, backgroundColor: '#111111', borderWidth: 1, borderColor: '#3A321F', paddingVertical: 12, alignItems: 'center', borderRadius: 12 }}>
+                        <Text style={{ color: '#D8B24A', fontWeight: '900' }}>+ ADD TIME</Text>
+                      </Pressable>
+
+                      {selectedTimes.length > 0 && (
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 12 }}>
+                          {selectedTimes.map(t => (
+                            <View key={t} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 16, borderWidth: 1, borderColor: '#3A321F', marginRight: 8, marginBottom: 8, backgroundColor: '#111' }}>
+                              <Text style={{ color: '#FFFFFF', fontWeight: '800', marginRight: 8 }}>{t}</Text>
+                              <Pressable onPress={() => setSelectedTimes(p => p.filter(x => x !== t))} style={{ padding: 6 }}>
+                                <Text style={{ color: '#D8B24A', fontWeight: '900' }}>×</Text>
+                              </Pressable>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 14 }}>
+                        <Pressable onPress={cancelScheduleEditing} style={{ paddingVertical: 14, paddingHorizontal: 18, borderRadius: 12, borderWidth: 1, borderColor: '#3A321F', alignItems: 'center' }}>
+                          <Text style={{ color: '#8E8E93', fontWeight: '900' }}>CANCEL</Text>
+                        </Pressable>
+
+                        <Pressable onPress={saveMoveSchedule} style={{ backgroundColor: '#D8B24A', paddingVertical: 14, paddingHorizontal: 18, borderRadius: 12, alignItems: 'center' }}>
+                          <Text style={{ color: '#0B0B0B', fontWeight: '900' }}>SAVE SCHEDULE</Text>
+                        </Pressable>
+                      </View>
+
+                      <GoalTimePicker show={showCustomPicker} initialDate={pendingTime} onCancel={() => setShowCustomPicker(false)} onAdd={addSelectedTimeFromDate} />
+                    </View>
+                  )}
+                </View>
+              )}
+</>
+          ):(
+            <>
+
+<Pressable
+  onPress={() => setShowTimerMenu(true)}
+  style={{
+    display: nextPending ? 'flex' : 'none',
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: '#D8B24A',
+    borderRadius: 16,
+    paddingVertical: 16,
+    alignItems: 'center',
+  }}
+>
+  <Text
+    style={{
+      color: '#D8B24A',
+      fontWeight: '900',
+      letterSpacing: 1,
+    }}
+  >
+    ⏱ SET TIMER
+  </Text>
+   
 </Pressable>
 {showTimerMenu && (
   <View
@@ -839,129 +1087,19 @@ if (!Notifications) return;
     </Pressable>
   </View>
 )}
-
-              <Pressable onPress={() => setShowReminderMenu(true)} style={{ marginTop: 14, borderWidth: 1, borderColor: '#D8B24A', borderRadius: 16, paddingVertical: 16, alignItems: 'center' }}>
-                <Text style={{ color: '#D8B24A', fontWeight: '900' }}>🔔 SET REMINDER </Text>
+    
+              <Pressable 
+              onPress={() => {
+  setShowScheduleBuilder(true);
+  Alert.alert('builder state set');
+}}
+              style={{ 
+                display: nextPending ? 'flex' : 'none',
+                marginTop: 14, borderWidth: 1, borderColor: '#D8B24A', borderRadius: 16, paddingVertical: 16, alignItems: 'center', backgroundColor: '#111111' }}>
+                <Text style={{ color: '#D8B24A', fontWeight: '900' }}>🔔 SET TIMER </Text>
               </Pressable>
-
-            {showReminderMenu && (
-                <View style={s.reminderMenu}>
-                  <Text style={s.reminderTitle}>WHEN SHOULD I REMIND YOU?</Text>
-
-                  <Pressable onPress={() => setShowScheduleBuilder(true)} style={s.primaryButton}><Text style={s.primaryButtonText}>MAKE A SCHEDULE</Text></Pressable>
-                  <Pressable onPress={() => { void scheduleSuggestedSchedule(); }} style={{ paddingVertical: 12 }}><Text style={{ color: '#D8B24A', fontWeight: '900' }}>USE SUGGESTED SCHEDULE</Text></Pressable>
-
-                  {savedSchedule && !showScheduleBuilder && (
-                    <View style={{ marginTop: 12 }}>
-                      <Text style={{ color: '#D8B24A', fontWeight: '900', marginBottom: 6 }}>SAVED SCHEDULE</Text>
-                      <Text style={{ color: '#FFFFFF', fontWeight: '900' }}>{savedSchedule.days.map((d)=>['S','M','T','W','T','F','S'][d-1]).join(' · ')}</Text>
-                      <Text style={{ color: '#FFFFFF', fontWeight: '900', marginTop: 6 }}>{savedSchedule.times.join(' · ')}</Text>
-                      <Pressable onPress={() => { setSelectedDays(savedSchedule.days.slice()); setSelectedTimes(savedSchedule.times.slice()); setShowScheduleBuilder(true); }} style={{ marginTop: 10 }}>
-                        <Text style={{ color: '#D8B24A', fontWeight: '900' }}>EDIT SCHEDULE</Text>
-                      </Pressable>
-                    </View>
-                  )}
-                
-                  {showScheduleBuilder && (
-                    <View style={s.scheduleBuilder}>
-                      <Text style={s.sectionTitle}>CHOOSE DAYS</Text>
-
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
-                        {['S','M','T','W','T','F','S'].map((label, idx) => {
-                          const dayNum = idx + 1; // 1..7
-                          const sel = selectedDays.includes(dayNum);
-                          return (
-                            <Pressable key={label + dayNum} onPress={() => setSelectedDays(p => p.includes(dayNum) ? p.filter(x=>x!==dayNum) : [...p, dayNum])} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: sel ? '#D8B24A' : '#3A321F', backgroundColor: sel ? '#D8B24A' : 'transparent', marginRight: 8, marginBottom: 8 }}>
-                              <Text style={{ color: sel ? '#0B0B0B' : '#D8B24A', fontWeight: '900' }}>{label}</Text>
-                            </Pressable>
-                          );
-                        })}
-                      </View>
-{showTimerMenu && (
-  <View
-    style={{
-      marginTop: 14,
-      borderWidth: 1,
-      borderColor: '#3A3426',
-      borderRadius: 16,
-      padding: 18,
-    }}
-  >
-    <Text
-      style={{
-        color: '#D8B24A',
-        fontWeight: '900',
-        letterSpacing: 1,
-        marginBottom: 12,
-      }}
-    >
-      HOW LONG DO YOU WANT?
-    </Text>
-
-    <TextInput
-      value={timerMinutes}
-      onChangeText={setTimerMinutes}
-      keyboardType="number-pad"
-      placeholder="Minutes"
-      placeholderTextColor="#777"
-      style={{
-        borderWidth: 1,
-        borderColor: '#3A3426',
-        borderRadius: 12,
-        padding: 14,
-        color: '#FFFFFF',
-        fontSize: 18,
-        marginBottom: 12,
-      }}
-    />
-
-    <Pressable
-      style={s.startMoveButton}
-      onPress={() => {
-        const minutes = Math.max(1, Number(timerMinutes) || 1);
-
-        setSecondsLeft(minutes * 60);
-        setMoveStarted(true);
-        setTimerRunning(true);
-        setShowTimerMenu(false);
-      }}
-    >
-      <Text style={s.startMoveText}>START TIMER</Text>
-    </Pressable>
-  </View>
-)}
-                      <Pressable onPress={() => { setPendingTime(new Date()); setShowCustomPicker(true); }} style={{ marginTop: 12, backgroundColor: '#111111', borderWidth: 1, borderColor: '#3A321F', paddingVertical: 12, alignItems: 'center', borderRadius: 12 }}>
-                        <Text style={{ color: '#D8B24A', fontWeight: '900' }}>+ ADD TIME</Text>
-                      </Pressable>
-
-                      {selectedTimes.length > 0 && (
-                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 12 }}>
-                          {selectedTimes.map(t => (
-                            <View key={t} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 16, borderWidth: 1, borderColor: '#3A321F', marginRight: 8, marginBottom: 8, backgroundColor: '#111' }}>
-                              <Text style={{ color: '#FFFFFF', fontWeight: '800', marginRight: 8 }}>{t}</Text>
-                              <Pressable onPress={() => setSelectedTimes(p => p.filter(x => x !== t))} style={{ padding: 6 }}>
-                                <Text style={{ color: '#D8B24A', fontWeight: '900' }}>×</Text>
-                              </Pressable>
-                            </View>
-                          ))}
-                        </View>
-                      )}
-
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 14 }}>
-                        <Pressable onPress={cancelScheduleEditing} style={{ paddingVertical: 14, paddingHorizontal: 18, borderRadius: 12, borderWidth: 1, borderColor: '#3A321F', alignItems: 'center' }}>
-                          <Text style={{ color: '#8E8E93', fontWeight: '900' }}>CANCEL</Text>
-                        </Pressable>
-
-                        <Pressable onPress={saveMoveSchedule} style={{ backgroundColor: '#D8B24A', paddingVertical: 14, paddingHorizontal: 18, borderRadius: 12, alignItems: 'center' }}>
-                          <Text style={{ color: '#0B0B0B', fontWeight: '900' }}>SAVE SCHEDULE</Text>
-                        </Pressable>
-                      </View>
-
-                      <GoalTimePicker show={showCustomPicker} initialDate={pendingTime} onCancel={() => setShowCustomPicker(false)} onAdd={addSelectedTimeFromDate} />
-                    </View>
-                  )}
-                </View>
-              )}
+  
+          
 
             </>
           )}
@@ -1285,4 +1423,20 @@ const s = StyleSheet.create({
   errorCard: { marginTop: 20, padding: 16 },
   errorTitle: { fontWeight: '900', color: '#fff' },
   errorCopy: { color: '#ddd', marginTop: 8 },
+  secondaryActionButton: {
+  marginTop: 12,
+  borderWidth: 1,
+  borderColor: '#DDB84A',
+  borderRadius: 16,
+  paddingVertical: 16,
+  alignItems: 'center',
+  backgroundColor: '#111111',
+},
+
+secondaryActionText: {
+  color: '#DDB84A',
+  fontSize: 16,
+  fontWeight: '900',
+  letterSpacing: 1,
+},
 });

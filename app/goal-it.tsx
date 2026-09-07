@@ -8,12 +8,13 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
+import GoalTimePicker from '@/components/GoalTimePicker';
 import { supabase } from '@/lib/supabase';
 import {
   buildMilestoneDrafts,
   classifyGoal,
 } from '@/lib/goalPlanner';
-
+import { getAIPlan } from '@/lib/aiPlanner';
 type ActionDraft = [string, number];
 
 function draftActions(title: string): ActionDraft[] {
@@ -144,31 +145,116 @@ function draftActions(title: string): ActionDraft[] {
 export default function GoalIt() {
     const [title, setTitle] = useState('');
   const [saving, setSaving] = useState(false);
-
+const [showSuccess, setShowSuccess] = useState(false);
 const [step, setStep] =
   useState<'goal' | 'outcome' | 'deadline' | 'why'>('goal');
 
 const [outcome, setOutcome] = useState('');
 const [deadline, setDeadline] = useState('');
+const [showTimePicker, setShowTimePicker] = useState(false);
+const [showGoalIdeas, setShowGoalIdeas] = useState(false);
+const [showScheduleBuilder, setShowScheduleBuilder] = useState(false);
+const [scheduleType, setScheduleType] =
+  useState<'once' | 'repeat' | null>(null);
+  const [scheduleDays, setScheduleDays] = useState<
+  { day: number; times: string[] }[]
+>([]);
+
+const [activeScheduleDay, setActiveScheduleDay] =
+  useState<number | null>(null);
+
+const [oneTimeDate, setOneTimeDate] =
+  useState<Date | null>(null);
+const [pendingTime, setPendingTime] = useState<Date>(new Date());
+const [showCustomPicker, setShowCustomPicker] = useState(false);
 const [why, setWhy] = useState('');
+function toggleScheduleDay(day: number) {
+  setScheduleDays((current) => {
+    const exists = current.some((item) => item.day === day);
+
+    if (exists) {
+      return current.filter((item) => item.day !== day);
+    }
+
+    return [...current, { day, times: [] }].sort(
+      (a, b) => a.day - b.day
+    );
+  });
+}
+
+function addTimeToDay(day: number, time: Date) {
+  const timeString =
+    `${String(time.getHours()).padStart(2, '0')}:` +
+    `${String(time.getMinutes()).padStart(2, '0')}`;
+
+  setScheduleDays((current) =>
+    current.map((item) =>
+      item.day === day && !item.times.includes(timeString)
+        ? {
+            ...item,
+            times: [...item.times, timeString].sort(),
+          }
+        : item
+    )
+  );
+}
+
+function removeTimeFromDay(day: number, time: string) {
+  setScheduleDays((current) =>
+    current.map((item) =>
+      item.day === day
+        ? {
+            ...item,
+            times: item.times.filter((t) => t !== time),
+          }
+        : item
+    )
+  );
+}
+
+function formatScheduleTime(time: string) {
+  const [hourString, minute] = time.split(':');
+  let hour = Number(hourString);
+
+  const amPm = hour >= 12 ? 'PM' : 'AM';
+  hour = hour % 12 || 12;
+
+  return `${hour}:${minute} ${amPm}`;
+}
   async function create() {
     const cleanTitle = title.trim();
     const cleanOutcome = outcome.trim();
 const cleanWhy = why.trim();
 
-const classification = classifyGoal({
-  title: `${cleanTitle} ${cleanOutcome}`,
+
+const aiPlan = await getAIPlan({
+  title: cleanTitle,
+  outcome: cleanOutcome || null,
+  why: cleanWhy || null,
   deadline: deadline || null,
 });
 
-const milestoneDrafts = buildMilestoneDrafts({
-  title: cleanTitle,
-  outcome: cleanOutcome,
-  why: cleanWhy,
-  deadline: deadline || null,
-  horizon: classification.horizon,
-  planningMode: classification.planningMode,
-});
+const classification = aiPlan
+  ? {
+      horizon: aiPlan.horizon,
+      planningMode: aiPlan.planningMode,
+    }
+  : classifyGoal({
+      title: `${cleanTitle} ${cleanOutcome}`,
+      deadline: deadline || null,
+    });
+
+const milestoneDrafts =
+  aiPlan?.milestones?.length
+    ? aiPlan.milestones
+    : buildMilestoneDrafts({
+        title: cleanTitle,
+        outcome: cleanOutcome,
+        why: cleanWhy,
+        deadline: deadline || null,
+        horizon: classification.horizon,
+        planningMode: classification.planningMode,
+      });
 
     if (!cleanTitle) {
       Alert.alert('Add a goal', 'Tell GOAL’D IN what you want to accomplish.');
@@ -227,17 +313,34 @@ if (milestoneError) {
 const firstMilestone = [...(createdMilestones ?? [])]
   .sort((a, b) => a.position - b.position)[0];
 
-const acts = draftActions(cleanTitle).slice(0, 1).map(([name, min], i) => ({
-  user_id: user.id,
-  goal_id: goal.id,
-  milestone_id: firstMilestone?.id ?? null,
-  title: name,
-  status: 'pending',
-  estimated_minutes: min,
-  type: min >= 10 ? 'timed' : 'task',
-  position: i,
-}));
+const firstMove =
+  aiPlan?.firstMove ??
+  (() => {
+    const fallback = draftActions(cleanTitle)[0];
 
+    return fallback
+      ? {
+          title: fallback[0],
+          estimatedMinutes: fallback[1],
+        }
+      : {
+          title: `Take the first useful step toward ${cleanTitle}`,
+          estimatedMinutes: 5,
+        };
+  })();
+
+const acts = [
+  {
+    user_id: user.id,
+    goal_id: goal.id,
+    milestone_id: firstMilestone?.id ?? null,
+    title: firstMove.title,
+    status: 'pending',
+    estimated_minutes: firstMove.estimatedMinutes,
+    type: firstMove.estimatedMinutes >= 10 ? 'timed' : 'task',
+    position: 0,
+  },
+];
 const { error: actionError } = await supabase
   .from('actions')
   .insert(acts);
@@ -255,13 +358,70 @@ if (actionError) {
         title: cleanTitle,
       },
     });
+setTitle('');
+setOutcome('');
+setDeadline('');
+setWhy('');
+setStep('goal');
 
-    router.replace('/today');
+setShowSuccess(true);
+
+setTimeout(() => {
+  setShowSuccess(false);
+  router.replace('/today');
+}, 700);
   }
 
   return (
     <View style={s.page}>
     <Text style={s.brand}>GOAL'D IN</Text>
+   {showSuccess && (
+  <View
+    style={{
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: '#090909',
+      justifyContent: 'center',
+      alignItems: 'center',
+      zIndex: 100,
+    }}
+  >
+    <Text
+      style={{
+        color: '#F2CF63',
+        fontSize: 16,
+        fontWeight: '800',
+        letterSpacing: 4,
+      }}
+    >
+      GOAL'D IN
+    </Text>
+
+    <Text
+      style={{
+        color: '#FFFFFF',
+        fontSize: 42,
+        fontWeight: '900',
+        marginTop: 18,
+      }}
+    >
+      GOAL'D IN ✓
+    </Text>
+
+    <Text
+      style={{
+        color: '#999',
+        fontSize: 17,
+        marginTop: 12,
+      }}
+    >
+      Your journey starts now.
+    </Text>
+  </View>
+)}
 
 {step === 'goal' && (
   <>
@@ -274,12 +434,72 @@ if (actionError) {
     <TextInput
       value={title}
       onChangeText={setTitle}
-      placeholder="Relaunch mygoaldin.com by August 11..."
-      placeholderTextColor="#666"
+      placeholder="I want to..."
+      placeholderTextColor="#667"
       style={s.input}
       multiline
     />
+<Pressable
+  onPress={() => setShowGoalIdeas((v) => !v)}
+  style={{
+    marginTop: 14,
+    marginBottom: 12,
+    paddingVertical: 12,
+  }}
+>
+  <Text
+    style={{
+      color: '#D8B24A',
+      fontSize: 18,
+      fontWeight: '900',
+      letterSpacing: 0.8,
+      textAlign: 'center',
+    }}
+  >
+    {showGoalIdeas ? 'HIDE IDEAS ↑' : 'NOT SURE? FIND A GOAL →'}
+  </Text>
+</Pressable>
 
+{showGoalIdeas && (
+  <View
+    style={{
+      gap: 10,
+      marginBottom: 18,
+    }}
+  >
+    {[
+      'Get stronger',
+      'Feel better',
+      'Get organized',
+      'Make more money',
+      'Learn something',
+      'Surprise me',
+    ].map((idea) => (
+      <Pressable
+        key={idea}
+        onPress={() => setTitle(idea)}
+        style={{
+          paddingVertical: 14,
+          paddingHorizontal: 16,
+          borderRadius: 14,
+          borderWidth: 1,
+          borderColor: '#3A3426',
+          backgroundColor: '#111111',
+        }}
+      >
+        <Text
+          style={{
+            color: '#FFFFFF',
+            fontWeight: '800',
+            textAlign: 'center',
+          }}
+        >
+          {idea}
+        </Text>
+      </Pressable>
+    ))}
+  </View>
+)}
     <Pressable
       style={s.primary}
       onPress={() => {
@@ -291,33 +511,33 @@ if (actionError) {
           return;
         }
 
-        setStep('deadline');
+        setStep('why');
       }}
     >
       <Text style={s.primaryText}>CONTINUE →</Text>
     </Pressable>
   </>
 )}
-
-{step === 'deadline' && (
+{step === 'why' && (
   <>
-    <Text style={s.h1}>When does this need to happen?</Text>
+    <Text style={s.h1}>Why does this matter?</Text>
 
     <Text style={s.copy}>
-      A deadline helps GOAL'D IN work backward and keep the next move realistic.
+      A clear reason makes the goal easier to stay connected to.
     </Text>
 
     <TextInput
-      value={deadline}
-      onChangeText={setDeadline}
-      placeholder="August 11"
+      value={why}
+      onChangeText={setWhy}
+      placeholder="Why do you want this?"
       placeholderTextColor="#666"
-      style={s.input}
+      style={[s.input, { minHeight: 110 }]}
+      multiline
     />
 
     <Pressable
       style={s.primary}
-      onPress={() => setStep('outcome')}
+      onPress={() => setStep('deadline')}
     >
       <Text style={s.primaryText}>CONTINUE →</Text>
     </Pressable>
@@ -327,10 +547,385 @@ if (actionError) {
     </Pressable>
   </>
 )}
+{step === 'deadline' && (
+  <>
+    <Text style={s.copy}>
+  Set timeline.
+</Text>
+<Pressable
+  onPress={() => setShowScheduleBuilder(true)}
+  style={s.primary}
+>
+  <Text style={s.primaryText}>MAKE A SCHEDULE</Text>
+</Pressable>
+{showScheduleBuilder && (
+  <View
+    style={{
+      marginTop: 14,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: '#3A3426',
+      borderRadius: 16,
+      backgroundColor: '#111111',
+    }}
+  >
+    <Text
+  style={{
+    color: '#D8B24A',
+    fontWeight: '900',
+    fontSize: 16,
+    marginBottom: 12,
+  }}
+>
+  WHEN SHOULD THIS HAPPEN?
+</Text>
 
+<View
+  style={{
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 18,
+  }}
+>
+  <Pressable
+    onPress={() => setScheduleType('once')}
+    style={{
+      flex: 1,
+      paddingVertical: 14,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: '#D8B24A',
+      backgroundColor:
+        scheduleType === 'once' ? '#D8B24A' : '#111111',
+      alignItems: 'center',
+    }}
+  >
+    <Text
+      style={{
+        color: scheduleType === 'once' ? '#0B0B0B' : '#D8B24A',
+        fontWeight: '900',
+      }}
+    >
+      ONE TIME
+    </Text>
+  </Pressable>
+
+  <Pressable
+    onPress={() => setScheduleType('repeat')}
+    style={{
+      flex: 1,
+      paddingVertical: 14,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: '#D8B24A',
+      backgroundColor:
+        scheduleType === 'repeat' ? '#D8B24A' : '#111111',
+      alignItems: 'center',
+    }}
+  >
+    <Text
+      style={{
+        color: scheduleType === 'repeat' ? '#0B0B0B' : '#D8B24A',
+        fontWeight: '900',
+      }}
+    >
+      REPEATING
+    </Text>
+  </Pressable>
+</View>
+{scheduleType === 'once' && (
+  <View
+    style={{
+      marginBottom: 18,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: '#3A3426',
+      borderRadius: 16,
+      backgroundColor: '#111111',
+    }}
+  >
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontWeight: '900',
+        fontSize: 16,
+        marginBottom: 12,
+      }}
+    >
+      CHOOSE DATE & TIME
+    </Text>
+
+    <Pressable
+      onPress={() => setShowTimePicker(true)}
+      style={{
+        borderWidth: 1,
+        borderColor: '#D8B24A',
+        borderRadius: 14,
+        paddingVertical: 14,
+        alignItems: 'center',
+      }}
+    >
+      <Text
+        style={{
+          color: '#D8B24A',
+          fontWeight: '900',
+        }}
+      >
+        {deadline || '+ SELECT DATE & TIME'}
+      </Text>
+    </Pressable>
+  </View>
+)}
+{scheduleType === 'repeat' && (
+  <>
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontWeight: '900',
+        fontSize: 16,
+        marginBottom: 12,
+      }}
+      
+    >
+      CHOOSE DAYS
+    </Text>
+
+    <View
+      style={{
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginBottom: 18,
+      }}
+    >
+{[
+  { label: 'SUN', day: 1 },
+  { label: 'MON', day: 2 },
+  { label: 'TUE', day: 3 },
+  { label: 'WED', day: 4 },
+  { label: 'THU', day: 5 },
+  { label: 'FRI', day: 6 },
+  { label: 'SAT', day: 7 },
+].map(({ label, day }) => {
+  const selected = scheduleDays.some(
+    (item) => item.day === day
+  );
+
+  return (
+    <Pressable
+      key={day}
+      onPress={() => toggleScheduleDay(day)}
+      style={{
+        minWidth: 72,
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: '#D8B24A',
+        backgroundColor: selected ? '#D8B24A' : '#111111',
+        alignItems: 'center',
+      }}
+    >
+      <Text
+        style={{
+          color: selected ? '#0B0B0B' : '#FFFFFF',
+          fontWeight: '900',
+        }}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+})}
+    </View>
+
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontWeight: '900',
+        fontSize: 16,
+        marginBottom: 10,
+      }}
+    >
+      CHOOSE TIME
+    </Text>
+
+   {scheduleDays.length === 0 ? (
+  <Text
+    style={{
+      color: '#8E8E93',
+      marginTop: 4,
+      marginBottom: 8,
+    }}
+  >
+    Choose a day first.
+  </Text>
+) : (
+  <View
+  style={{
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#3A3426',
+    borderRadius: 14,
+    backgroundColor: '#111111',
+  }}
+>
+  <Pressable
+    onPress={() => {
+      if (scheduleDays.length === 0) return;
+
+      setActiveScheduleDay(scheduleDays[0].day);
+      setPendingTime(new Date());
+      setShowCustomPicker(true);
+    }}
+    style={{
+      borderWidth: 1,
+      borderColor: '#D8B24A',
+      borderRadius: 14,
+      paddingVertical: 14,
+      alignItems: 'center',
+    }}
+  >
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontWeight: '900',
+      }}
+    >
+      + ADD TIME
+    </Text>
+  </Pressable>
+
+  {scheduleDays[0]?.times?.length > 0 && (
+    <View
+      style={{
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginTop: 12,
+      }}
+    >
+      {scheduleDays[0].times.map((time: string) => (
+        <Pressable
+          key={time}
+          onPress={() => removeTimeFromDay(scheduleDays[0].day, time)}
+          style={{
+            borderWidth: 1,
+            borderColor: '#D8B24A',
+            borderRadius: 99,
+            paddingVertical: 8,
+            paddingHorizontal: 12,
+          }}
+        >
+          <Text
+            style={{
+              color: '#D8B24A',
+              fontWeight: '800',
+            }}
+          >
+            {formatScheduleTime(time)} ×
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  )}
+</View>
+)}
+
+      </>
+)}
+  </View>
+)}
+<Pressable
+  onPress={() => {
+    // we will wire this to the suggested schedule next
+  }}
+  style={{
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginBottom: 8,
+  }}
+>
+  <Text
+    style={{
+      color: '#D8B24A',
+      fontWeight: '900',
+      letterSpacing: 0.8,
+    }}
+  >
+    USE SUGGESTED SCHEDULE
+  </Text>
+</Pressable>
+    <Text style={s.copy}>
+      Or type it your way.
+    </Text>
+
+    <TextInput
+  value={deadline}
+  onChangeText={setDeadline}
+  placeholder="e.g. Friday at 5 PM, every morning"
+  placeholderTextColor="#666"
+  style={[s.input, { minHeight: 56, height: 56, paddingVertical: 12 }]}
+/>
+
+    <Pressable
+  disabled={saving}
+  style={s.primary}
+  onPress={() => {
+    setShowTimePicker(false);
+    create();
+  }}
+>
+  <Text style={s.primaryText}>
+    {saving ? 'BUILDING...' : 'GOAL IT →'}
+  </Text>
+</Pressable>
+
+    <Pressable onPress={() => setStep('why')}>
+      <Text style={s.backText}>← Back</Text>
+    </Pressable>
+  </>
+)}
+<GoalTimePicker
+  show={showCustomPicker}
+  showDate={false}
+  initialDate={pendingTime}
+  addedTimes={
+  activeScheduleDay !== null
+    ? scheduleDays.find((item) => item.day === activeScheduleDay)?.times.map(formatScheduleTime) ?? []
+    : []
+}
+  onCancel={() => setShowCustomPicker(false)}
+  onAdd={(date) => {
+  
+
+  scheduleDays.forEach((item) => {
+    addTimeToDay(item.day, date);
+  });
+
+  setActiveScheduleDay(null);
+}}
+/>
+<GoalTimePicker
+  show={showTimePicker}
+  initialDate={new Date()}
+  onCancel={() => setShowTimePicker(false)}
+  onAdd={(date) => {
+    setShowTimePicker(false);
+
+    const formatted = date.toLocaleString([], {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+
+    setDeadline(formatted);
+  }}
+/>
 {step === 'outcome' && (
   <>
-    <Text style={s.h1}>What does winning look like?</Text>
+    <Text style={s.h1}>GOAL IT.</Text>
 
     <Text style={s.copy}>
       Describe the result you want. GOAL'D IN will use this to build the path.
@@ -339,8 +934,8 @@ if (actionError) {
     <TextInput
       value={outcome}
       onChangeText={setOutcome}
-      placeholder="The site represents the brand, explains the mission and app, promotes the products, and sends people to the Shopify store."
-      placeholderTextColor="#666"
+      placeholder="Work to achieve"
+      placeholderTextColor="664"
       style={s.input}
       multiline
     />
@@ -355,7 +950,7 @@ if (actionError) {
       </Text>
     </Pressable>
 
-    <Pressable onPress={() => setStep('deadline')}>
+    <Pressable onPress={() => setStep('why')}>
       <Text style={s.backText}>← Back</Text>
     </Pressable>
   </>
@@ -391,7 +986,7 @@ const s = StyleSheet.create({
     marginVertical: 20,
   },
   input: {
-    minHeight: 150,
+    minHeight: 120,
     backgroundColor: '#121214',
     borderRadius: 18,
     borderWidth: 1,
