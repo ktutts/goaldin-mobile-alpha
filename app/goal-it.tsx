@@ -294,7 +294,7 @@ const milestoneDrafts =
   goal_id: goal.id,
   title: milestone.title,
   description: milestone.description ?? null,
-  weight: milestone.weight,
+  weight: Math.round(Number(milestone.weight)),
   position: milestone.position,
   status: milestone.position === 0 ? 'active' : 'pending',
 }));

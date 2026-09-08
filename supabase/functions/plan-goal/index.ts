@@ -59,7 +59,12 @@ async function buildAIPlan(input: {
   deadline: string | null;
 }) {
   const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) return null;
+  if (!apiKey) {
+  console.log("AI DEBUG: OPENAI_API_KEY missing");
+  return null;
+}
+
+console.log("AI DEBUG: key found, calling OpenAI");
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -209,11 +214,15 @@ Rules:
   const result = await response.json();
 
   const text =
-    result?.output?.[0]?.content?.find(
-      (item: any) => item.type === "output_text"
-    )?.text ?? null;
+  result?.output
+    ?.flatMap((item: any) => item.content ?? [])
+    ?.find((item: any) => item.type === "output_text")
+    ?.text ?? null;
 
-  if (!text) return null;
+if (!text) {
+  console.log("AI DEBUG: response succeeded but no output_text found");
+  return null;
+}
 
   return JSON.parse(text);
 }
