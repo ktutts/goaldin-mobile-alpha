@@ -926,27 +926,24 @@ if (!Notifications) return;
 )}
 <Pressable
   style={s.secondaryActionButton}
-  onPress={() => {
-    setShowTimerMenu(true)}}
+  onPress={() => setShowTimerMenu((current) => !current)}
 >
-  <Text style={s.secondaryActionText}>⏱ SET TIMER</Text>
+  <Text style={s.secondaryActionText}>{showTimerMenu ? '✕ CLOSE TIMER' : '⏱ SET TIMER'}</Text>
 </Pressable>
 
 <Pressable
   style={s.secondaryActionButton}
-  onPress={() => {
-  setShowReminderMenu(true);
-  setShowScheduleBuilder(true);
-}}
+ onPress={() => setShowReminderMenu((current) => !current)}
 >
-  <Text style={s.secondaryActionText}>🔔 SET REMINDER</Text>
+ <Text style={s.secondaryActionText}>
+  {showReminderMenu ? '✕ CLOSE REMINDER' : '🔔 SET REMINDER'}
+</Text>
 </Pressable>
 {showReminderMenu && (
                 <View style={s.reminderMenu}>
                   <Text style={s.reminderTitle}>WHEN SHOULD I REMIND YOU?</Text>
 
                   <Pressable onPress={() => setShowScheduleBuilder(true)} style={s.primaryButton}><Text style={s.primaryButtonText}>MAKE A SCHEDULE</Text></Pressable>
-                  <Pressable onPress={() => { void scheduleSuggestedSchedule(); }} style={{ paddingVertical: 12 }}><Text style={{ color: '#D8B24A', fontWeight: '900' }}>USE SUGGESTED SCHEDULE</Text></Pressable>
 
                   {savedSchedule && !showScheduleBuilder && (
                     <View style={{ marginTop: 12 }}>

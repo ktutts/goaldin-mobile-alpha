@@ -17,10 +17,12 @@ export type AIPlan = {
 
   firstMove: {
     title: string;
-    estimatedMinutes: number;
+    estimatedMinutes: number | null;
+    whyThisMove: string | null;
   } | null;
-};
 
+  coachMessage: string | null;
+};
 export async function getAIPlan(input: {
   title: string;
   outcome?: string | null;

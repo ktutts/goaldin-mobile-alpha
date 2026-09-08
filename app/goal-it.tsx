@@ -337,7 +337,7 @@ const acts = [
     title: firstMove.title,
     status: 'pending',
     estimated_minutes: firstMove.estimatedMinutes,
-    type: firstMove.estimatedMinutes >= 10 ? 'timed' : 'task',
+    type: (firstMove.estimatedMinutes ?? 10) >= 10 ? 'timed' : 'task',
     position: 0,
   },
 ];

@@ -52,6 +52,171 @@ function buildFirstMove(title: string, target: string) {
     estimatedMinutes: 10,
   };
 }
+async function buildAIPlan(input: {
+  title: string;
+  outcome: string;
+  why: string;
+  deadline: string | null;
+}) {
+  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!apiKey) return null;
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-5.6",
+      input: [
+        {
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text: `
+You are the coaching engine for GOAL'D IN.
+
+Your job is to turn a user's goal into a practical path that feels specific, motivating, and immediately useful.
+
+Rules:
+- Do not give generic filler.
+- Make milestones concrete and recognizable.
+- The first move should be something the user can actually do next.
+- Keep the first move small enough to reduce friction.
+- Ask for clarification only when the goal is too vague to plan responsibly.
+- CoachMessage should sound concise, confident, supportive, and action-focused.
+- Do not sound clinical, corporate, or overly motivational.
+- Preserve the user's intent.
+- Prefer progress over perfection.
+- Return JSON only.
+              `.trim(),
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: JSON.stringify(input),
+            },
+          ],
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "goal_plan",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              normalizedTitle: { type: "string" },
+              outcome: {
+                anyOf: [{ type: "string" }, { type: "null" }],
+              },
+              horizon: {
+                type: "string",
+                enum: ["short", "medium", "long"],
+              },
+              planningMode: {
+                type: "string",
+                enum: ["task", "timed", "milestone"],
+              },
+              needsClarification: { type: "boolean" },
+              clarificationQuestion: {
+                anyOf: [{ type: "string" }, { type: "null" }],
+              },
+              clarificationOptions: {
+                type: "array",
+                items: { type: "string" },
+              },
+              milestones: {
+                type: "array",
+                minItems: 1,
+                maxItems: 5,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    title: { type: "string" },
+                    description: { type: "string" },
+                    weight: { type: "number" },
+                    position: { type: "number" },
+                  },
+                  required: [
+                    "title",
+                    "description",
+                    "weight",
+                    "position",
+                  ],
+                },
+              },
+              firstMove: {
+                anyOf: [
+                  {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      title: { type: "string" },
+                      estimatedMinutes: {
+                        anyOf: [{ type: "number" }, { type: "null" }],
+                      },
+                      whyThisMove: {
+                        anyOf: [{ type: "string" }, { type: "null" }],
+                      },
+                    },
+                    required: [
+                      "title",
+                      "estimatedMinutes",
+                      "whyThisMove",
+                    ],
+                  },
+                  { type: "null" },
+                ],
+              },
+              coachMessage: {
+                anyOf: [{ type: "string" }, { type: "null" }],
+              },
+            },
+            required: [
+              "normalizedTitle",
+              "outcome",
+              "horizon",
+              "planningMode",
+              "needsClarification",
+              "clarificationQuestion",
+              "clarificationOptions",
+              "milestones",
+              "firstMove",
+              "coachMessage",
+            ],
+          },
+        },
+      },
+      store: false,
+    }),
+  });
+
+  if (!response.ok) {
+    console.log("OpenAI planner failed:", response.status);
+    return null;
+  }
+
+  const result = await response.json();
+
+  const text =
+    result?.output?.[0]?.content?.find(
+      (item: any) => item.type === "output_text"
+    )?.text ?? null;
+
+  if (!text) return null;
+
+  return JSON.parse(text);
+}
 Deno.serve(async (req) => {
   try {
     const body = await req.json();
@@ -60,7 +225,6 @@ Deno.serve(async (req) => {
     const outcome = body?.outcome?.trim() || "";
     const why = body?.why?.trim() || "";
     const deadline = body?.deadline || null;
-
     if (!title) {
       return new Response(
         JSON.stringify({ error: "Missing goal title" }),
@@ -70,7 +234,19 @@ Deno.serve(async (req) => {
         }
       );
     }
+const aiPlan = await buildAIPlan({
+  title,
+  outcome,
+  why,
+  deadline,
+});
 
+if (aiPlan) {
+  return new Response(JSON.stringify(aiPlan), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
     const target = outcome || title;
 function buildSmartMilestones(
   title: string,
@@ -257,6 +433,8 @@ const plan = {
   milestones: buildSmartMilestones(title, target, deadline),
 
   firstMove: buildFirstMove(title, target),
+  coachMessage:
+  `We're starting with one clear move toward ${target || title}. Keep it simple, get the first win, then we'll build from there.`,
 };
 
 return new Response(JSON.stringify(plan), {
