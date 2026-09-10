@@ -22,6 +22,8 @@ export type Action = {
   milestone_id?: string | null;
   user_id: string;
   title: string;
+  steps?: string[];
+  completed_steps?: number[];
   description: string | null;
   status: 'pending' | 'completed' | 'skipped';
   estimated_minutes: number | null;

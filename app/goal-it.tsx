@@ -168,6 +168,9 @@ const [oneTimeDate, setOneTimeDate] =
 const [pendingTime, setPendingTime] = useState<Date>(new Date());
 const [showCustomPicker, setShowCustomPicker] = useState(false);
 const [why, setWhy] = useState('');
+const [whyReasons, setWhyReasons] = useState<string[]>([]);
+const [whyBarriers, setWhyBarriers] = useState<string[]>([]);
+const [showWhyText, setShowWhyText] = useState(false);
 function toggleScheduleDay(day: number) {
   setScheduleDays((current) => {
     const exists = current.some((item) => item.day === day);
@@ -222,10 +225,28 @@ function formatScheduleTime(time: string) {
   return `${hour}:${minute} ${amPm}`;
 }
   async function create() {
+    if (saving) return;
+
     const cleanTitle = title.trim();
     const cleanOutcome = outcome.trim();
-const cleanWhy = why.trim();
-
+const cleanWhy = [
+  whyReasons.length
+    ? `Why this matters: ${whyReasons.join('; ')}`
+    : '',
+  whyBarriers.length
+    ? `Possible barriers: ${whyBarriers.join('; ')}`
+    : '',
+  why.trim()
+    ? `User note: ${why.trim()}`
+    : '',
+]
+  .filter(Boolean)
+  .join('\n');
+ if (!cleanTitle) {
+      Alert.alert('Add a goal', 'Tell GOAL’D IN what you want to accomplish.');
+      return;
+    }
+setSaving(true);
 
 const aiPlan = await getAIPlan({
   title: cleanTitle,
@@ -256,12 +277,9 @@ const milestoneDrafts =
         planningMode: classification.planningMode,
       });
 
-    if (!cleanTitle) {
-      Alert.alert('Add a goal', 'Tell GOAL’D IN what you want to accomplish.');
-      return;
-    }
+   
 
-    setSaving(true);
+    
 
     const {
       data: { user },
@@ -294,7 +312,7 @@ const milestoneDrafts =
   goal_id: goal.id,
   title: milestone.title,
   description: milestone.description ?? null,
-  weight: Math.round(Number(milestone.weight)),
+ weight: Math.max(1, Math.min(100, Math.round(Number(milestone.weight)) || 1)),
   position: milestone.position,
   status: milestone.position === 0 ? 'active' : 'pending',
 }));
@@ -322,10 +340,12 @@ const firstMove =
       ? {
           title: fallback[0],
           estimatedMinutes: fallback[1],
+          steps: [],
         }
       : {
           title: `Take the first useful step toward ${cleanTitle}`,
           estimatedMinutes: 5,
+          steps: [],
         };
   })();
 
@@ -337,6 +357,7 @@ const acts = [
     title: firstMove.title,
     status: 'pending',
     estimated_minutes: firstMove.estimatedMinutes,
+    steps: firstMove.steps ?? [],
     type: (firstMove.estimatedMinutes ?? 10) >= 10 ? 'timed' : 'task',
     position: 0,
   },
@@ -525,15 +546,140 @@ setTimeout(() => {
     <Text style={s.copy}>
       A clear reason makes the goal easier to stay connected to.
     </Text>
+    <Text style={[s.copy, { marginTop: 18, fontWeight: '800', color: '#D8B24A' }]}>
+  PICK WHAT FITS
+</Text>
 
-    <TextInput
-      value={why}
-      onChangeText={setWhy}
-      placeholder="Why do you want this?"
-      placeholderTextColor="#666"
-      style={[s.input, { minHeight: 110 }]}
-      multiline
-    />
+<View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 10 }}>
+  {[
+    'I want to feel better',
+    'I need this handled',
+    'It will make life easier',
+    'I want to prove I can do it',
+    'Someone else is counting on me',
+    'This opens the door to something bigger',
+  ].map((reason) => {
+    const selected = whyReasons.includes(reason);
+
+    return (
+      <Pressable
+        key={reason}
+        onPress={() =>
+          setWhyReasons((current) =>
+            current.includes(reason)
+              ? current.filter((item) => item !== reason)
+              : [...current, reason]
+          )
+        }
+        style={[
+          
+          {
+            width: 'auto',
+            paddingHorizontal: 14,
+            paddingVertical: 10,
+            backgroundColor: selected ? '#D8B24A' : 'transparent',
+          },
+        ]}
+      >
+        <Text
+          style={[
+            
+            { color: selected ? '#111' : '#D8B24A' },
+          ]}
+        >
+          {reason}
+        </Text>
+      </Pressable>
+    );
+  })}
+</View>
+<Text
+  style={{
+    color: '#D8B24A',
+    fontWeight: '900',
+    fontSize: 16,
+    marginTop: 28,
+    marginBottom: 14,
+  }}
+>
+  WHAT COULD GET IN THE WAY?
+</Text>
+
+<View
+  style={{
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  }}
+>
+  {[
+    'Time',
+    'Money',
+    'Tools or parts',
+    'Not sure how',
+    'Motivation',
+    'Other people',
+    'Not sure yet',
+  ].map((barrier) => {
+    const selected = whyBarriers.includes(barrier);
+
+    return (
+      <Pressable
+        key={barrier}
+        onPress={() =>
+          setWhyBarriers((current) =>
+            current.includes(barrier)
+              ? current.filter((item) => item !== barrier)
+              : [...current, barrier]
+          )
+        }
+        style={{
+          paddingHorizontal: 14,
+          paddingVertical: 10,
+          borderRadius: 18,
+          borderWidth: 1,
+          borderColor: '#D8B24A',
+          backgroundColor: selected ? '#D8B24A' : 'transparent',
+        }}
+      >
+        <Text
+          style={{
+            color: selected ? '#111' : '#D8B24A',
+            fontWeight: '800',
+            fontSize: 14,
+          }}
+        >
+          {barrier}
+        </Text>
+      </Pressable>
+    );
+  })}
+</View>
+    <Pressable
+  onPress={() => setShowWhyText((current) => !current)}
+  style={{ paddingVertical: 14 }}
+>
+  <Text
+    style={{
+      color: '#D8B24A',
+      fontWeight: '800',
+      fontSize: 15,
+    }}
+  >
+    {showWhyText ? '− HIDE MY OWN WORDS' : '+ ADD SOMETHING IN MY OWN WORDS'}
+  </Text>
+</Pressable>
+
+{showWhyText && (
+  <TextInput
+    value={why}
+    onChangeText={setWhy}
+    placeholder="Anything else GOAL'D IN should know?"
+    placeholderTextColor="#666"
+    style={[s.input, { minHeight: 90 }]}
+    multiline
+  />
+)}
 
     <Pressable
       style={s.primary}

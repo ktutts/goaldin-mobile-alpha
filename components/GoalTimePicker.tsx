@@ -25,6 +25,23 @@ export default function GoalTimePicker({
   const [selectedDate, setSelectedDate] = useState(initialDate ?? new Date());
   const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
   const [localAddedTimes, setLocalAddedTimes] = useState<string[]>(addedTimes);
+  const months = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+const currentYear = new Date().getFullYear();
+
+const years = Array.from(
+  { length: 21 },
+  (_, index) => currentYear + index
+);
+
+const daysInSelectedMonth = new Date(
+  selectedDate.getFullYear(),
+  selectedDate.getMonth() + 1,
+  0
+).getDate();
   useEffect(() => {
   if (show) {
     setLocalAddedTimes(addedTimes);
@@ -70,74 +87,174 @@ export default function GoalTimePicker({
           borderColor: '#3A321F',
         }}
       >
-     {showDate && (
-      <Text style={{ color: '#D8B24A', fontWeight: '900', letterSpacing: 1 }}>
-  SELECT DATE
-  
-</Text>
-     )}
-<Text
-  style={{
-    color: '#D8B24A',
-    fontWeight: '900',
-    letterSpacing: 1,
-    marginBottom: 10,
-  }}
->
-
-</Text>
+     
 {showDate && (
-<ScrollView
-  style={{
-    maxHeight: 110,
-    marginBottom: 24,
-  }}
-  showsVerticalScrollIndicator={false}
->
-  {Array.from({ length: 60 }, (_, index) => {
-    const d = new Date();
-    d.setDate(d.getDate() + index);
+  <View style={{ marginBottom: 24 }}>
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontWeight: '900',
+        fontSize: 14,
+        marginBottom: 12,
+        letterSpacing: 1,
+      }}
+    >
+      SELECT DATE
+    </Text>
 
-    const selected =
-      d.toDateString() === selectedDate.toDateString();
-
-    return (
-      <Pressable
-        key={index}
-        onPress={() => {
-          const next = new Date(selectedDate);
-          next.setFullYear(
-            d.getFullYear(),
-            d.getMonth(),
-            d.getDate()
-          );
-          setSelectedDate(next);
-        }}
-        style={{
-          height: 52,
-          justifyContent: 'center',
-          alignItems: 'center',
-          borderRadius: 12,
-          backgroundColor: selected ? '#D8B24A' : 'transparent',
-        }}
+    <View
+      style={{
+        flexDirection: 'row',
+        gap: 10,
+      }}
+    >
+      <ScrollView
+        style={{ maxHeight: 180, flex: 1 }}
+        showsVerticalScrollIndicator={false}
+        contentOffset={{ x: 0, y: selectedDate.getMonth() * 48 }}
       >
-        <Text
-          style={{
-            color: selected ? '#0B0B0B' : '#FFFFFF',
-            fontSize: selected ? 22 : 18,
-            fontWeight: selected ? '900' : '600',
-          }}
-        >
-          {d.toLocaleDateString([], {
-            weekday: 'short',
-            month: 'short',
-            day: 'numeric',
-          })}
-        </Text>
-      </Pressable>
-    );
-  })}
-</ScrollView>
+        {months.map((month, index) => {
+          const selected = selectedDate.getMonth() === index;
+
+          return (
+            <Pressable
+              key={month}
+              onPress={() => {
+                const next = new Date(selectedDate);
+                const currentDay = next.getDate();
+
+                next.setDate(1);
+                next.setMonth(index);
+
+                const maxDay = new Date(
+                  next.getFullYear(),
+                  index + 1,
+                  0
+                ).getDate();
+
+                next.setDate(Math.min(currentDay, maxDay));
+                setSelectedDate(next);
+              }}
+              style={{
+                paddingVertical: 12,
+                borderRadius: 10,
+                alignItems: 'center',
+                backgroundColor: selected ? '#D8B24A' : 'transparent',
+              }}
+            >
+              <Text
+                style={{
+                  color: selected ? '#111' : '#FFF',
+                  fontWeight: '800',
+                }}
+              >
+                {month}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      <ScrollView
+        style={{ maxHeight: 180, flex: 1 }}
+        showsVerticalScrollIndicator={false}
+        contentOffset={{ x: 0, y: Math.max(0, (selectedDate.getDate() - 2) * 48) }}
+      >
+        {Array.from({ length: daysInSelectedMonth }, (_, index) => {
+          const day = index + 1;
+          const selected = selectedDate.getDate() === day;
+
+          return (
+            <Pressable
+              key={day}
+              onPress={() => {
+                const next = new Date(selectedDate);
+                next.setDate(day);
+                setSelectedDate(next);
+              }}
+              style={{
+                paddingVertical: 12,
+                borderRadius: 10,
+                alignItems: 'center',
+                backgroundColor: selected ? '#D8B24A' : 'transparent',
+              }}
+            >
+              <Text
+                style={{
+                  color: selected ? '#111' : '#FFF',
+                  fontWeight: '800',
+                }}
+              >
+                {day}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      <ScrollView
+        style={{ maxHeight: 180, flex: 1 }}
+        showsVerticalScrollIndicator={false}
+      >
+        {years.map((year) => {
+          const selected = selectedDate.getFullYear() === year;
+
+          return (
+            <Pressable
+              key={year}
+              onPress={() => {
+                const next = new Date(selectedDate);
+                const currentDay = next.getDate();
+
+                next.setDate(1);
+                next.setFullYear(year);
+
+                const maxDay = new Date(
+                  year,
+                  next.getMonth() + 1,
+                  0
+                ).getDate();
+
+                next.setDate(Math.min(currentDay, maxDay));
+                setSelectedDate(next);
+              }}
+              style={{
+                paddingVertical: 12,
+                borderRadius: 10,
+                alignItems: 'center',
+                backgroundColor: selected ? '#D8B24A' : 'transparent',
+              }}
+            >
+              <Text
+                style={{
+                  color: selected ? '#111' : '#FFF',
+                  fontWeight: '800',
+                }}
+              >
+                {year}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+    </View>
+
+    <Text
+      style={{
+        color: '#FFF',
+        textAlign: 'center',
+        fontWeight: '900',
+        fontSize: 18,
+        marginTop: 14,
+      }}
+    >
+      {selectedDate.toLocaleDateString([], {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric',
+      })}
+    </Text>
+  </View>
 )}
       <Text
   style={{

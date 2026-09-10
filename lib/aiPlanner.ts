@@ -16,11 +16,11 @@ export type AIPlan = {
   milestones: MilestoneDraft[];
 
   firstMove: {
-    title: string;
-    estimatedMinutes: number | null;
-    whyThisMove: string | null;
-  } | null;
-
+  title: string;
+  estimatedMinutes: number | null;
+  whyThisMove: string | null;
+  steps: string[];
+} | null;
   coachMessage: string | null;
 };
 export async function getAIPlan(input: {

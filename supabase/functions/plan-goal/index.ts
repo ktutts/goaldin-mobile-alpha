@@ -95,7 +95,34 @@ Rules:
 - Do not sound clinical, corporate, or overly motivational.
 - Preserve the user's intent.
 - Prefer progress over perfection.
-- Return JSON only.
+- Make the first move concrete and specific to the actual goal, not generic planning language.
+- The first move should answer: "What can this person actually do next to move this specific goal forward?"
+- When useful, make the first move an assessment, checklist, preparation step, practice session, decision, purchase, conversation, or piece of work.
+- Consider what the move actually requires: time, money, tools, materials, information, skills, people, or professional help.
+- Only surface resources that are relevant to this goal and this move. Do not add unnecessary complexity.
+- A move may have a suggested target date when timing would help the user reach the next milestone, but do not make every move require a deadline.
+- Treat the plan as adaptable. If a move cannot be completed, does not work, or circumstances change, the plan should be able to change rather than treating that as failure.
+- Milestones must describe meaningful goal-specific outcomes. Avoid generic milestone names such as "Define the finish line", 
+  "Reach the first meaningful milestone", "Reach the halfway point", or "Complete the goal" when a more specific outcome can be identified.
+- Distinguish simple tasks from multi-step projects.
+- If the goal is a multi-step project, create enough milestones to represent the real phases of work. Usually 4 to 7 milestones.
+- Do not use a single milestone for a multi-step project such as building, restoring, renovating, training for an event, launching something, or completing a long-term transformation.
+- A firstMove completes only the immediate action toward the first milestone. Completing firstMove must not imply the entire goal is complete.
+- Each milestone should represent a meaningful phase or outcome, not a single tiny task.
+- The final milestone should represent the actual finished result of the goal.- 
+firstMove must be the most useful concrete action the user can take next, not a generic planning statement.
+- firstMove should directly advance the first milestone.
+- Use the user's stated barriers when choosing firstMove. If time, money, tools, parts, know-how, or other constraints were provided, choose a move that accounts for them.
+- Avoid firstMove titles such as "Define what finished looks like", "Define the goal", "Make a plan", or "Get started" when the goal provides enough context for a more specific action.
+- Prefer an observable action: measure, inspect, photograph, list, call, research, practice, compare, gather, schedule, buy, repair, write, test, or complete something specific.
+- firstMove should normally be completable in one sitting and should make the next decision easier.- 
+- firstMove.steps should be a short practical checklist for completing firstMove.
+- Use 2 to 6 steps when a checklist is useful.
+- For very simple moves, steps may be an empty array.
+- Each step should be concrete, observable, and specific to the current goal.
+- Do not repeat the firstMove title as a step.
+- Steps should help the user finish the move, not describe later milestones.
+Return JSON only.
               `.trim(),
             },
           ],
@@ -173,11 +200,16 @@ Rules:
                       whyThisMove: {
                         anyOf: [{ type: "string" }, { type: "null" }],
                       },
+                      steps: {
+  type: "array",
+  items: { type: "string" },
+},
                     },
                     required: [
                       "title",
                       "estimatedMinutes",
                       "whyThisMove",
+                      "steps",
                     ],
                   },
                   { type: "null" },

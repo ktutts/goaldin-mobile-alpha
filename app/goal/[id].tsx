@@ -506,7 +506,21 @@ if (currentMilestone) {
   }, [timerRunning]);
 
   const nextPending = actions.find((a) => a.status === 'pending');
+const completedMilestones = milestones.filter(
+  (m) => m.status === 'completed'
+).length;
 
+const currentStepProgress =
+  nextPending?.steps?.length
+    ? (nextPending.completed_steps?.length ?? 0) / nextPending.steps.length
+    : 0;
+
+const goalProgress =
+  milestones.length > 0
+    ? Math.round(
+        ((completedMilestones + currentStepProgress) / milestones.length) * 100
+      )
+    : 0;
   function formatTimeFromDate(d: Date) {
     return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   }
@@ -740,15 +754,7 @@ if (!Notifications) return;
 </Text>
           <Text style={s.title}>{goal?.title}</Text>
           <CircularProgress
- progress={
-  milestones.length > 0
-    ? Math.round(
-        (milestones.filter((m) => m.status === 'completed').length /
-          milestones.length) *
-          100
-      )
-    : 0
-}
+ progress={goalProgress}
   size={160}
   strokeWidth={12}
   label={!nextPending ? "GOAL'D IN ✓" : "IN PROGRESS"}
@@ -798,7 +804,62 @@ if (!Notifications) return;
             <>
             <Text style={s.nextMoveTitle}>{nextPending.title}</Text>
               <Text style={s.nextMoveMeta}>{nextPending.estimated_minutes ? `${nextPending.estimated_minutes} MIN` : 'READY WHEN YOU ARE'}</Text>
+{Array.isArray(nextPending.steps) && nextPending.steps.length > 0 && (
+  <View style={{ marginTop: 14, marginBottom: 14, gap: 10 }}>
+    {nextPending.steps.map((step: string, index: number) => (
+      <Pressable
+  key={`${step}-${index}`}
+  onPress={async () => {
+    const current = nextPending.completed_steps ?? [];
+    const updated = current.includes(index)
+      ? current.filter((i) => i !== index)
+      : [...current, index];
 
+    const { error } = await supabase
+      .from('actions')
+      .update({ completed_steps: updated })
+      .eq('id', nextPending.id);
+
+    if (!error) {
+      setActions((currentActions) =>
+        currentActions.map((action) =>
+          action.id === nextPending.id
+            ? { ...action, completed_steps: updated }
+            : action
+        )
+      );
+    }
+  }}
+  style={{
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  }}
+>
+        <Text
+          style={{
+            color: '#D8B24A',
+            fontSize: 18,
+            fontWeight: '900',
+          }}
+        >
+          {nextPending.completed_steps?.includes(index) ? '✓' : '○'}
+        </Text>
+
+        <Text
+          style={{
+            color: '#E8E8E8',
+            fontSize: 16,
+            lineHeight: 22,
+            flex: 1,
+          }}
+        >
+          {step}
+        </Text>
+      </Pressable>
+    ))}
+  </View>
+)}
            <Pressable
   style={s.startMoveButton}
   onPress={() => completeMove(nextPending.id)}
