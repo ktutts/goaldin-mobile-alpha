@@ -1,5 +1,8 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-function buildFirstMove(title: string, target: string) {
+import "https://deno.land/x/types/index.d.ts";{
+import {
+  dispatchAIRequest,
+  chooseModelRole,
+} from "../shared/router.ts";
   const text = `${title} ${target}`.toLowerCase();
 
   if (
@@ -52,211 +55,76 @@ function buildFirstMove(title: string, target: string) {
     estimatedMinutes: 10,
   };
 }
+// MAKE SURE THIS IS AT THE VERY TOP OF INDEX.TS (Line 2):
+// import { dispatchAIRequest } from "../_shared/router.ts";
+function buildFirstMove(title: string, target: string) {
+function needsAI(title: string, target: string, why: string) {
+  const text = `${title} ${target} ${why}`.toLowerCase();
+
+  const complexSignals = [
+    "career",
+    "business",
+    "launch",
+    "strategy",
+    "plan",
+    "change my life",
+    "don't know",
+    "not sure",
+    "figure out",
+    "long term",
+    "year",
+    "learn",
+"become",
+"improve",
+"master",
+"build",
+"create",
+"develop",
+"train for",
+"prepare for",
+  ];
+
+  return complexSignals.some((word) => text.includes(word));
+}
 async function buildAIPlan(input: {
   title: string;
-  outcome: string;
+  target: string;
   why: string;
   deadline: string | null;
 }) {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) {
-  console.log("AI DEBUG: OPENAI_API_KEY missing");
-  return null;
-}
+  try {
+    const systemPrompt = `You are GOAL'D IN's executive strategy coach.
+Your job is to turn a user's goal into a practical path that feels specific, motivating, and immediate.
 
-console.log("AI DEBUG: key found, calling OpenAI");
+CRITICAL: You MUST return a single valid JSON object strictly adhering to this format:
+{
+  "planningMode": "milestones",
+  "needsClarification": false,
+  "clarificationQuestion": null,
+  "milestones": [
+    { "title": "First Milestone", "targetDate": null }
+  ],
+  "firstMove": {
+    "title": "Immediate Actionable Title",
+    "steps": ["Step 1", "Step 2", "Step 3"]
+  },
+  "coachMessage": "Short encouraging message"
+}`;
 
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-5.6",
-      input: [
-        {
-          role: "system",
-          content: [
-            {
-              type: "input_text",
-              text: `
-You are the coaching engine for GOAL'D IN.
+const plan = await dispatchAIRequest(
+  chooseModelRole("PLANNING"),
+  systemPrompt,
+  userPrompt
+);
+    // Pass "STRATEGY" to route this heavy lifting to Claude 3.5 Sonnet via OpenRouter
+    const plan = await dispatchAIRequest("STRATEGY", systemPrompt, userPrompt);
+    return plan;
 
-Your job is to turn a user's goal into a practical path that feels specific, motivating, and immediately useful.
-
-Rules:
-- Do not give generic filler.
-- Make milestones concrete and recognizable.
-- The first move should be something the user can actually do next.
-- Keep the first move small enough to reduce friction.
-- Ask for clarification only when the goal is too vague to plan responsibly.
-- CoachMessage should sound concise, confident, supportive, and action-focused.
-- Do not sound clinical, corporate, or overly motivational.
-- Preserve the user's intent.
-- Prefer progress over perfection.
-- Make the first move concrete and specific to the actual goal, not generic planning language.
-- The first move should answer: "What can this person actually do next to move this specific goal forward?"
-- When useful, make the first move an assessment, checklist, preparation step, practice session, decision, purchase, conversation, or piece of work.
-- Consider what the move actually requires: time, money, tools, materials, information, skills, people, or professional help.
-- Only surface resources that are relevant to this goal and this move. Do not add unnecessary complexity.
-- A move may have a suggested target date when timing would help the user reach the next milestone, but do not make every move require a deadline.
-- Treat the plan as adaptable. If a move cannot be completed, does not work, or circumstances change, the plan should be able to change rather than treating that as failure.
-- Milestones must describe meaningful goal-specific outcomes. Avoid generic milestone names such as "Define the finish line", 
-  "Reach the first meaningful milestone", "Reach the halfway point", or "Complete the goal" when a more specific outcome can be identified.
-- Distinguish simple tasks from multi-step projects.
-- If the goal is a multi-step project, create enough milestones to represent the real phases of work. Usually 4 to 7 milestones.
-- Do not use a single milestone for a multi-step project such as building, restoring, renovating, training for an event, launching something, or completing a long-term transformation.
-- A firstMove completes only the immediate action toward the first milestone. Completing firstMove must not imply the entire goal is complete.
-- Each milestone should represent a meaningful phase or outcome, not a single tiny task.
-- The final milestone should represent the actual finished result of the goal.- 
-firstMove must be the most useful concrete action the user can take next, not a generic planning statement.
-- firstMove should directly advance the first milestone.
-- Use the user's stated barriers when choosing firstMove. If time, money, tools, parts, know-how, or other constraints were provided, choose a move that accounts for them.
-- Avoid firstMove titles such as "Define what finished looks like", "Define the goal", "Make a plan", or "Get started" when the goal provides enough context for a more specific action.
-- Prefer an observable action: measure, inspect, photograph, list, call, research, practice, compare, gather, schedule, buy, repair, write, test, or complete something specific.
-- firstMove should normally be completable in one sitting and should make the next decision easier.- 
-- firstMove.steps should be a short practical checklist for completing firstMove.
-- Use 2 to 6 steps when a checklist is useful.
-- For very simple moves, steps may be an empty array.
-- Each step should be concrete, observable, and specific to the current goal.
-- Do not repeat the firstMove title as a step.
-- Steps should help the user finish the move, not describe later milestones.
-Return JSON only.
-              `.trim(),
-            },
-          ],
-        },
-        {
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: JSON.stringify(input),
-            },
-          ],
-        },
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "goal_plan",
-          strict: true,
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              normalizedTitle: { type: "string" },
-              outcome: {
-                anyOf: [{ type: "string" }, { type: "null" }],
-              },
-              horizon: {
-                type: "string",
-                enum: ["short", "medium", "long"],
-              },
-              planningMode: {
-                type: "string",
-                enum: ["task", "timed", "milestone"],
-              },
-              needsClarification: { type: "boolean" },
-              clarificationQuestion: {
-                anyOf: [{ type: "string" }, { type: "null" }],
-              },
-              clarificationOptions: {
-                type: "array",
-                items: { type: "string" },
-              },
-              milestones: {
-                type: "array",
-                minItems: 1,
-                maxItems: 5,
-                items: {
-                  type: "object",
-                  additionalProperties: false,
-                  properties: {
-                    title: { type: "string" },
-                    description: { type: "string" },
-                    weight: { type: "number" },
-                    position: { type: "number" },
-                  },
-                  required: [
-                    "title",
-                    "description",
-                    "weight",
-                    "position",
-                  ],
-                },
-              },
-              firstMove: {
-                anyOf: [
-                  {
-                    type: "object",
-                    additionalProperties: false,
-                    properties: {
-                      title: { type: "string" },
-                      estimatedMinutes: {
-                        anyOf: [{ type: "number" }, { type: "null" }],
-                      },
-                      whyThisMove: {
-                        anyOf: [{ type: "string" }, { type: "null" }],
-                      },
-                      steps: {
-  type: "array",
-  items: { type: "string" },
-},
-                    },
-                    required: [
-                      "title",
-                      "estimatedMinutes",
-                      "whyThisMove",
-                      "steps",
-                    ],
-                  },
-                  { type: "null" },
-                ],
-              },
-              coachMessage: {
-                anyOf: [{ type: "string" }, { type: "null" }],
-              },
-            },
-            required: [
-              "normalizedTitle",
-              "outcome",
-              "horizon",
-              "planningMode",
-              "needsClarification",
-              "clarificationQuestion",
-              "clarificationOptions",
-              "milestones",
-              "firstMove",
-              "coachMessage",
-            ],
-          },
-        },
-      },
-      store: false,
-    }),
-  });
-
-  if (!response.ok) {
-    console.log("OpenAI planner failed:", response.status);
-    return null;
+  } catch (error) {
+    console.log("AI DEBUG: Error calling router, returning null for local fallback", error);
+    return null; // Returning null allows local buildFirstMove() fallback
   }
-
-  const result = await response.json();
-
-  const text =
-  result?.output
-    ?.flatMap((item: any) => item.content ?? [])
-    ?.find((item: any) => item.type === "output_text")
-    ?.text ?? null;
-
-if (!text) {
-  console.log("AI DEBUG: response succeeded but no output_text found");
-  return null;
 }
-
-  return JSON.parse(text);
 }
 Deno.serve(async (req) => {
   try {
@@ -275,18 +143,20 @@ Deno.serve(async (req) => {
         }
       );
     }
-const aiPlan = await buildAIPlan({
-  title,
-  outcome,
-  why,
-  deadline,
-});
-
-if (aiPlan) {
-  return new Response(JSON.stringify(aiPlan), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
+if (needsAI(title, outcome, why)) {
+  const aiPlan = await buildAIPlan({
+    title,
+    target: outcome,
+    why,
+    deadline,
   });
+
+  if (aiPlan) {
+    return new Response(JSON.stringify(aiPlan), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 }
     const target = outcome || title;
 function buildSmartMilestones(

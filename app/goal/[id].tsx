@@ -9,7 +9,7 @@ import GoalTimePicker from '../../components/GoalTimePicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getCapacityForDate, capacityLabels } from '@/lib/capacity';
 import Constants from 'expo-constants';
-
+import { getGoalCoachResponse } from "@/lib/goalCoach";
 
 
 type GoalSchedule = {
@@ -40,7 +40,7 @@ export default function GoalDetail() {
   const [timerRunning, setTimerRunning] = useState(false);
   const [moveStarted, setMoveStarted] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(0);
-
+const [showCoachInput, setShowCoachInput] = useState(false);
   const [showReminderMenu, setShowReminderMenu] = useState(false);
   const [showScheduleBuilder, setShowScheduleBuilder] = useState(false);
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
@@ -53,6 +53,20 @@ export default function GoalDetail() {
   const [showTimerMenu, setShowTimerMenu] = useState(false);
   const [timerMinutes, setTimerMinutes] = useState('10');
   const [coachMessage, setCoachMessage] = useState<string | null>(null);
+  const [coachThinking, setCoachThinking] = useState(false);
+  const [adaptedMove, setAdaptedMove] = useState<{
+  title: string;
+  minutes: number;
+  steps: string[];
+} | null>(null);
+const [adaptedCompletedSteps, setAdaptedCompletedSteps] = useState<number[]>([]);
+  const [showObstacleMenu, setShowObstacleMenu] = useState(false);
+  const [showChangedMenu, setShowChangedMenu] = useState(false);
+  const [showPriorityMenu, setShowPriorityMenu] = useState(false);
+  const [showMoveCheckMenu, setShowMoveCheckMenu] = useState(false);
+  const [showBetterMoveMenu, setShowBetterMoveMenu] = useState(false);
+  const [coachInput, setCoachInput] = useState('');
+  const [adaptationCompleted, setAdaptationCompleted] = useState(false);
   const deleteGoal = () => {
   if (!goalId) return;
  
@@ -506,6 +520,15 @@ if (currentMilestone) {
   }, [timerRunning]);
 
   const nextPending = actions.find((a) => a.status === 'pending');
+ const displayedMoveTitle =
+  adaptedMove?.title ?? nextPending?.title;
+
+const displayedMoveMinutes =
+  adaptedMove?.minutes ?? nextPending?.estimated_minutes;
+
+const displayedMoveSteps =
+  adaptedMove?.steps ??
+  (Array.isArray(nextPending?.steps) ? nextPending.steps : []); 
 const completedMilestones = milestones.filter(
   (m) => m.status === 'completed'
 ).length;
@@ -797,39 +820,114 @@ if (!Notifications) return;
       {coachMessage}
     </Text>
   </View>
-)}  
+)} 
+{adaptationCompleted && (
+  <View
+    style={{
+      marginBottom: 18,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: '#D8B24A',
+      borderRadius: 12,
+    }}
+  >
+    <Text
+      style={{
+        color: '#FFFFFF',
+        fontSize: 17,
+        fontWeight: '800',
+        marginBottom: 6,
+      }}
+    >
+      YOU MADE PROGRESS TODAY
+    </Text>
+
+    <Text
+      style={{
+        color: '#E8E8E8',
+        fontSize: 15,
+        lineHeight: 21,
+        marginBottom: 16,
+      }}
+    >
+      Want to keep going, or call today's move complete?
+    </Text>
+
+    <Pressable
+      style={s.startMoveButton}
+      onPress={() => {
+        setAdaptationCompleted(false);
+      }}
+    >
+      <Text style={s.startMoveText}>KEEP GOING</Text>
+    </Pressable>
+
+    <Pressable
+      onPress={() => {
+        setAdaptationCompleted(false);
+        setCoachMessage(
+          "Good work. You adjusted, made progress, and stayed on your path."
+        );
+      }}
+      style={{
+        marginTop: 10,
+        paddingVertical: 12,
+        alignItems: 'center',
+      }}
+    >
+      <Text
+        style={{
+          color: '#D8B24A',
+          fontWeight: '800',
+          fontSize: 15,
+        }}
+      >
+        DONE FOR TODAY
+      </Text>
+    </Pressable>
+  </View>
+)} 
           <Text style={s.nextMoveLabel}>⚡  YOUR NEXT MOVE</Text>
 
           {nextPending ? (
             <>
-            <Text style={s.nextMoveTitle}>{nextPending.title}</Text>
-              <Text style={s.nextMoveMeta}>{nextPending.estimated_minutes ? `${nextPending.estimated_minutes} MIN` : 'READY WHEN YOU ARE'}</Text>
-{Array.isArray(nextPending.steps) && nextPending.steps.length > 0 && (
+            <Text style={s.nextMoveTitle}>{displayedMoveTitle}</Text>
+              <Text style={s.nextMoveMeta}>{displayedMoveMinutes ? `${displayedMoveMinutes} MIN` : 'READY WHEN YOU ARE'}</Text>
+{Array.isArray(displayedMoveSteps) && displayedMoveSteps.length > 0 && (
   <View style={{ marginTop: 14, marginBottom: 14, gap: 10 }}>
-    {nextPending.steps.map((step: string, index: number) => (
+    {displayedMoveSteps.map((step: string, index: number) => (
       <Pressable
   key={`${step}-${index}`}
-  onPress={async () => {
-    const current = nextPending.completed_steps ?? [];
-    const updated = current.includes(index)
-      ? current.filter((i) => i !== index)
-      : [...current, index];
+ onPress={async () => {
+  if (adaptedMove) {
+    setAdaptedCompletedSteps((current) =>
+      current.includes(index)
+        ? current.filter((i) => i !== index)
+        : [...current, index]
+    );
+    return;
+  }
 
-    const { error } = await supabase
-      .from('actions')
-      .update({ completed_steps: updated })
-      .eq('id', nextPending.id);
+  const current = nextPending.completed_steps ?? [];
+  const updated = current.includes(index)
+    ? current.filter((i) => i !== index)
+    : [...current, index];
 
-    if (!error) {
-      setActions((currentActions) =>
-        currentActions.map((action) =>
-          action.id === nextPending.id
-            ? { ...action, completed_steps: updated }
-            : action
-        )
-      );
-    }
-  }}
+  const { error } = await supabase
+    .from('actions')
+    .update({ completed_steps: updated })
+    .eq('id', nextPending.id);
+
+  if (!error) {
+    setActions((currentActions) =>
+      currentActions.map((action) =>
+        action.id === nextPending.id
+          ? { ...action, completed_steps: updated }
+          : action
+      )
+    );
+  }
+}}
   style={{
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -843,7 +941,13 @@ if (!Notifications) return;
             fontWeight: '900',
           }}
         >
-          {nextPending.completed_steps?.includes(index) ? '✓' : '○'}
+          {adaptedMove
+  ? adaptedCompletedSteps.includes(index)
+    ? '✓'
+    : '○'
+  : nextPending.completed_steps?.includes(index)
+    ? '✓'
+    : '○'}
         </Text>
 
         <Text
@@ -862,10 +966,477 @@ if (!Notifications) return;
 )}
            <Pressable
   style={s.startMoveButton}
-  onPress={() => completeMove(nextPending.id)}
+  onPress={() => {
+  if (adaptedMove) {
+    setCoachMessage(
+      "Nice work. You adapted instead of stopping. That still moves you forward."
+    );
+    setAdaptedMove(null);
+   setAdaptedCompletedSteps([]);
+    setAdaptationCompleted(true); 
+  } else {
+    completeMove(nextPending.id);
+    
+  }
+}}
 >
   <Text style={s.startMoveText}>MARK COMPLETE</Text>
 </Pressable>
+<Pressable
+  onPress={() => {
+    setCoachMessage(
+      "No problem. What's getting in your way?"
+    );
+    setShowObstacleMenu(true);
+  }}
+  style={{
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#D8B24A',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  }}
+>
+  <Text
+    style={{
+      color: '#D8B24A',
+      fontWeight: '800',
+      letterSpacing: 1,
+    }}
+  >
+    CAN'T DO THIS?
+  </Text>
+</Pressable>
+{showObstacleMenu && (
+  <View
+    style={{
+      marginTop: 10,
+      gap: 8,
+    }}
+  >
+    {[
+      "I DON'T HAVE ENOUGH TIME",
+      'TOO DIFFICULT',
+      'WRONG TIME',
+      'SOMETHING CHANGED',
+      "THIS ISN'T THE RIGHT MOVE",
+    ].map((reason) => (
+      <Pressable
+        key={reason}
+        onPress={() => {
+          setShowReminderMenu(false);
+setShowTimerMenu(false);
+if (reason === "I DON'T HAVE ENOUGH TIME") {
+  const shorterMinutes = Math.max(
+    1,
+    Math.min(5, Math.floor((nextPending.estimated_minutes ?? 10) / 2))
+  );
+
+  setAdaptedMove({
+    title: nextPending.title,
+    minutes: shorterMinutes,
+    steps: [
+      `Spend ${shorterMinutes} minutes making the smallest useful amount of progress on this move.`,
+    ],
+  });
+
+  setAdaptedCompletedSteps([]);
+
+  setCoachMessage(
+    `Got it. Keep the goal. Let's make "${nextPending.title}" smaller so you can still move forward today.`
+  );
+} else if (reason === 'TOO DIFFICULT') {
+  const originalSteps = nextPending.steps ?? [];
+
+  const easierSteps =
+    Array.isArray(originalSteps) && originalSteps.length > 0
+      ? [originalSteps[0]]
+      : [`Start with the easiest part of "${nextPending.title}".`];
+
+  setAdaptedMove({
+    title: `Start: ${nextPending.title}`,
+    minutes: Math.max(
+      5,
+      Math.floor((nextPending.estimated_minutes ?? 10) / 2)
+    ),
+    steps: easierSteps,
+  });
+
+  setAdaptedCompletedSteps([]);
+
+  setCoachMessage(
+    `Got it. Let's make "${nextPending.title}" easier. Just start with the first piece.`
+  );
+  } else if (reason === 'WRONG TIME') {
+  setAdaptedMove(null);
+
+  setCoachMessage(
+    `Got it. The move still works — now just isn't the right time. Let's find a better time for "${nextPending.title}".`
+  );
+
+  setShowTimerMenu(false);
+  setShowReminderMenu(true);
+} else if (reason === 'SOMETHING CHANGED') {
+  setCoachMessage("Got it. What changed?");
+  setShowPriorityMenu(true);
+} else {
+  setCoachMessage(`Got it. ${reason}. Let's adjust from here.`);
+}
+
+  setShowObstacleMenu(false);
+}}
+        style={{
+          borderWidth: 1,
+          borderColor: '#3A3426',
+          borderRadius: 10,
+          paddingVertical: 11,
+          paddingHorizontal: 14,
+        }}
+      >
+        <Text
+          style={{
+            color: '#FFFFFF',
+            fontSize: 14,
+            fontWeight: '700',
+          }}
+        >
+          {reason}
+        </Text>
+      </Pressable>
+    ))}
+  </View>
+)}
+{showChangedMenu && (
+  <View
+    style={{
+      marginTop: 10,
+      gap: 8,
+    }}
+  >
+    <Text
+      style={{
+        color: '#D9B84C',
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 1,
+        marginBottom: 4,
+      }}
+    >
+      WHAT CHANGED?
+    </Text>
+
+    {[
+      'I HAVE LESS TIME',
+      'I NEED TO DO THIS LATER',
+      'THIS GOT HARDER',
+      'MY PRIORITIES CHANGED',
+    ].map((change) => (
+      <Pressable
+        key={change}
+        onPress={() => {
+        setShowChangedMenu(false);
+
+          if (change === 'I HAVE LESS TIME') {
+            const shorterMinutes = Math.max(
+              1,
+              Math.min(
+                5,
+                Math.floor((nextPending.estimated_minutes ?? 10) / 2)
+              )
+            );
+
+            setAdaptedMove({
+              title: nextPending.title,
+              minutes: shorterMinutes,
+              steps: [
+                `Spend ${shorterMinutes} minutes making useful progress on this move.`,
+              ],
+            });
+
+            setAdaptedCompletedSteps([]);
+            setCoachMessage(
+              `Got it. Let's make "${nextPending.title}" smaller for today.`
+            );
+          } else if (change === 'I NEED TO DO THIS LATER') {
+            setAdaptedMove(null);
+            setCoachMessage(
+              `Got it. The move still works. Let's find a better time for "${nextPending.title}".`
+            );
+            setShowReminderMenu(true);
+          } else if (change === 'THIS GOT HARDER') {
+            setCoachMessage(
+              `Got it. Let's make "${nextPending.title}" easier to start.`
+            );
+          } else if (change === 'MY PRIORITIES CHANGED') {
+  setAdaptedMove(null);
+
+  setCoachMessage(
+    `Got it. Priorities changed. Let's decide what matters most now.`
+  );
+
+  setShowPriorityMenu(true);
+}
+        }}
+        style={{
+          borderWidth: 1,
+          borderColor: '#3A3426',
+          borderRadius: 10,
+          paddingVertical: 11,
+          paddingHorizontal: 14,
+        }}
+      >
+        <Text
+          style={{
+            color: '#FFFFFF',
+            fontSize: 14,
+            fontWeight: '700',
+          }}
+        >
+          {change}
+        </Text>
+      </Pressable>
+    ))}
+  </View>
+)}
+{showPriorityMenu && (
+  <View
+    style={{
+      marginTop: 10,
+      gap: 8,
+    }}
+  >
+    
+  <Text
+    style={{
+      color: '#D9B84C',
+      fontSize: 14,
+      fontWeight: '900',
+      letterSpacing: 1,
+    }}
+  >
+    WHAT CHANGED?
+  </Text>
+
+  <TextInput
+    value={coachInput}
+    onChangeText={setCoachInput}
+    placeholder="Tell me what's going on..."
+    placeholderTextColor="#777777"
+    multiline
+    style={{
+      color: '#FFFFFF',
+      fontSize: 16,
+      borderWidth: 1,
+      borderColor: '#3A3426',
+      borderRadius: 12,
+      paddingVertical: 14,
+      paddingHorizontal: 14,
+      minHeight: 90,
+      textAlignVertical: 'top',
+    }}
+  />
+
+  <Pressable
+  disabled={coachThinking}
+    onPress={async() => {
+  if (!coachInput.trim()) return;
+
+  const response = coachInput.trim();
+setCoachThinking(true);
+const aiResponse = await getGoalCoachResponse({
+  goalTitle: goal?.title ?? "",
+  nextMoveTitle: displayedMoveTitle ?? "",
+  nextMoveMinutes: displayedMoveMinutes ?? null,
+  userMessage: response,
+})
+console.log("GOAL COACH AI RESPONSE:", aiResponse);
+if (aiResponse.proposedMove) {
+  setAdaptedMove(aiResponse.proposedMove);
+  setAdaptedCompletedSteps([]);
+}
+ setCoachMessage(aiResponse.message);
+ setCoachThinking(false);
+
+  setShowCoachInput(true);
+  setCoachInput("");
+  setShowMoveCheckMenu(true);
+}}
+    style={{
+      borderWidth: 1,
+      borderColor: '#D9B84C',
+      borderRadius: 10,
+      paddingVertical: 14,
+      paddingHorizontal: 14,
+      alignItems: 'center',
+    }}
+  >
+    <Text
+      style={{
+        color: '#D9B84C',
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 1,
+      }}
+    >
+     {coachThinking ? "COACHING..." : "TELL THE COACH"}
+    </Text>
+  </Pressable>
+</View>
+)}{showMoveCheckMenu && (
+  <View
+    style={{
+      marginTop: 10,
+      gap: 8,
+    }}
+  >
+    <Text
+      style={{
+        color: '#D9B84C',
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 1,
+        marginBottom: 4,
+      }}
+    >
+      DOES THIS NEXT MOVE STILL FIT?
+    </Text>
+
+    <Pressable
+      onPress={() => {
+        setShowMoveCheckMenu(false);
+        setCoachMessage(
+          `Good. Keep "${nextPending.title}" as your Next Move. Stay Goal'D In.`
+        );
+      }}
+      style={{
+        borderWidth: 1,
+        borderColor: '#3A3426',
+        borderRadius: 10,
+        paddingVertical: 11,
+        paddingHorizontal: 14,
+      }}
+    >
+      <Text
+        style={{
+          color: '#FFFFFF',
+          fontSize: 14,
+          fontWeight: '700',
+        }}
+      >
+        YES — KEEP THIS MOVE
+      </Text>
+    </Pressable>
+
+    <Pressable
+      onPress={() => {
+  setShowMoveCheckMenu(false);
+  setShowBetterMoveMenu(true);
+
+  setCoachMessage(
+    `Absolutely. What would make the Next Move better right now?`
+  );
+}}
+      style={{
+        borderWidth: 1,
+        borderColor: '#3A3426',
+        borderRadius: 10,
+        paddingVertical: 11,
+        paddingHorizontal: 14,
+      }}
+    >
+      <Text
+        style={{
+          color: '#FFFFFF',
+          fontSize: 14,
+          fontWeight: '700',
+        }}
+      >
+        NO — GIVE ME A BETTER MOVE
+      </Text>
+    </Pressable>
+  </View>
+)}
+{showBetterMoveMenu && (
+  <View
+    style={{
+      marginTop: 10,
+      gap: 8,
+    }}
+  >
+    <Text
+      style={{
+        color: '#D9B84C',
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 1,
+        marginBottom: 4,
+      }}
+    >
+      WHAT WOULD HELP?
+    </Text>
+
+    {[
+      'MAKE IT SMALLER',
+      'I HAVE LESS TIME',
+      'MAKE IT EASIER TO START',
+      'TRY A DIFFERENT APPROACH',
+    ].map((option) => (
+      <Pressable
+        key={option}
+        onPress={async () => {
+  setShowBetterMoveMenu(false);
+  setCoachThinking(true);
+
+  try {
+    const aiResponse = await getGoalCoachResponse({
+      goalTitle: goal?.title ?? '',
+      nextMoveTitle: nextPending?.title ?? '',
+      nextMoveMinutes: nextPending?.minutes ?? null,
+      userMessage: option,
+    });
+
+    console.log('GOAL COACH QUICK OPTION:', aiResponse);
+
+    if (aiResponse.proposedMove) {
+      setAdaptedMove(aiResponse.proposedMove);
+      setAdaptedCompletedSteps([]);
+    }
+
+    setCoachMessage(aiResponse.message);
+    if (aiResponse.action === 'RESCHEDULE') {
+  setShowReminderMenu(true);
+}
+  } catch (error) {
+    console.error('GOAL COACH QUICK OPTION ERROR:', error);
+    setCoachMessage(
+      "I couldn't adjust that move right now. Try again."
+    );
+  } finally {
+    setCoachThinking(false);
+  }
+}}
+        style={{
+          borderWidth: 1,
+          borderColor: '#3A3426',
+          borderRadius: 10,
+          paddingVertical: 11,
+          paddingHorizontal: 14,
+        }}
+      >
+        <Text
+          style={{
+            color: '#FFFFFF',
+            fontSize: 14,
+            fontWeight: '700',
+          }}
+        >
+          {option}
+        </Text>
+      </Pressable>
+    ))}
+  </View>
+)}
 {showTimerMenu && (
   <View
     style={{

@@ -8,6 +8,10 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
+import {
+  ExpoSpeechRecognitionModule,
+  useSpeechRecognitionEvent,
+} from 'expo-speech-recognition';
 import GoalTimePicker from '@/components/GoalTimePicker';
 import { supabase } from '@/lib/supabase';
 import {
@@ -15,6 +19,7 @@ import {
   classifyGoal,
 } from '@/lib/goalPlanner';
 import { getAIPlan } from '@/lib/aiPlanner';
+import { getSuggestedSchedule } from '@/lib/suggestedSchedule';
 type ActionDraft = [string, number];
 
 function draftActions(title: string): ActionDraft[] {
@@ -141,9 +146,46 @@ function draftActions(title: string): ActionDraft[] {
     ['Do that first move', 20],
   ];
 }
-
+const getNotifications = async () => {
+  try {
+    return await import('expo-notifications');
+  } catch {
+    return null;
+  }
+};
 export default function GoalIt() {
     const [title, setTitle] = useState('');
+    const [speechTarget, setSpeechTarget] =
+  useState<'title' | 'why'>('title');
+    useSpeechRecognitionEvent("result", (event) => {
+  const spokenText = event.results[0]?.transcript;
+
+  if (spokenText) {
+  if (speechTarget === 'why') {
+    setWhy(spokenText);
+  } else {
+    setTitle(spokenText);
+  }
+}
+});
+const startListening = async () => {
+  const permission =
+    await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+
+  if (!permission.granted) {
+    Alert.alert(
+      "Microphone permission needed",
+      "Allow microphone access to speak your goal."
+    );
+    return;
+  }
+
+  ExpoSpeechRecognitionModule.start({
+    lang: "en-US",
+    interimResults: true,
+    continuous: false,
+  });
+};
   const [saving, setSaving] = useState(false);
 const [showSuccess, setShowSuccess] = useState(false);
 const [step, setStep] =
@@ -379,6 +421,39 @@ if (actionError) {
         title: cleanTitle,
       },
     });
+    // Schedule the reminders chosen while creating this goal
+if (scheduleType === 'repeat' && scheduleDays.length > 0) {
+  const Notifications = await getNotifications();
+
+  if (Notifications) {
+    const { status } =
+      await Notifications.requestPermissionsAsync();
+
+    if (status === 'granted') {
+      for (const item of scheduleDays) {
+        for (const time of item.times) {
+          const [hour, minute] = time.split(':').map(Number);
+
+          await Notifications.scheduleNotificationAsync({
+            content: {
+              title: `GOAL'D IN — ${cleanTitle}`,
+              body:
+                firstMove.title ||
+                `Time to make progress on ${cleanTitle}.`,
+              sound: true,
+            },
+            trigger: {
+              type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+              weekday: item.day,
+              hour,
+              minute,
+            },
+          });
+        }
+      }
+    }
+  }
+}
 setTitle('');
 setOutcome('');
 setDeadline('');
@@ -460,6 +535,22 @@ setTimeout(() => {
       style={s.input}
       multiline
     />
+    <Pressable
+  onPress={() => {
+  setSpeechTarget('title');
+  startListening();
+}}
+  style={{
+    marginTop: 10,
+    alignSelf: 'flex-end',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  }}
+>
+  <Text style={{ color: '#D4AF37', fontWeight: '700' }}>
+    🎤 SPEAK YOUR GOAL
+  </Text>
+</Pressable>
 <Pressable
   onPress={() => setShowGoalIdeas((v) => !v)}
   style={{
@@ -601,9 +692,65 @@ setTimeout(() => {
     marginTop: 28,
     marginBottom: 14,
   }}
+  >
+  MY OWN WORDS
+</Text>
+  <Pressable
+  onPress={() => setShowWhyText((current) => !current)}
+  style={{ paddingVertical: 14 }}
+>
+  <Text
+    style={{
+      color: '#D8B24A',
+      fontWeight: '800',
+      fontSize: 15,
+    }}
+  >
+    {showWhyText ? '− HIDE MY OWN WORDS' : '+ ADD SOMETHING IN MY OWN WORDS'}
+  </Text>
+</Pressable>
+
+{showWhyText && (
+  <TextInput
+    value={why}
+    onChangeText={setWhy}
+    placeholder="Anything else GOAL'D IN should know?"
+    placeholderTextColor="#666"
+    style={[s.input, { minHeight: 90 }]}
+    multiline
+  />
+)}
+{showWhyText && (
+  <Pressable
+    onPress={() => {
+      setSpeechTarget('why');
+      startListening();
+    }}
+    style={{ marginTop: 10, alignSelf: 'flex-start' }}
+  >
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontWeight: '800',
+        fontSize: 15,
+      }}
+    >
+      🎙 SPEAK MY WORDS
+    </Text>
+  </Pressable>
+)}
+<Text
+  style={{
+    color: '#D8B24A',
+    fontWeight: '900',
+    fontSize: 16,
+    marginTop: 28,
+    marginBottom: 14,
+  }}
 >
   WHAT COULD GET IN THE WAY?
 </Text>
+
 
 <View
   style={{
@@ -656,32 +803,6 @@ setTimeout(() => {
   })}
 </View>
     <Pressable
-  onPress={() => setShowWhyText((current) => !current)}
-  style={{ paddingVertical: 14 }}
->
-  <Text
-    style={{
-      color: '#D8B24A',
-      fontWeight: '800',
-      fontSize: 15,
-    }}
-  >
-    {showWhyText ? '− HIDE MY OWN WORDS' : '+ ADD SOMETHING IN MY OWN WORDS'}
-  </Text>
-</Pressable>
-
-{showWhyText && (
-  <TextInput
-    value={why}
-    onChangeText={setWhy}
-    placeholder="Anything else GOAL'D IN should know?"
-    placeholderTextColor="#666"
-    style={[s.input, { minHeight: 90 }]}
-    multiline
-  />
-)}
-
-    <Pressable
       style={s.primary}
       onPress={() => setStep('deadline')}
     >
@@ -699,7 +820,7 @@ setTimeout(() => {
   Set timeline.
 </Text>
 <Pressable
-  onPress={() => setShowScheduleBuilder(true)}
+ onPress={() => setShowScheduleBuilder((current) => !current)}
   style={s.primary}
 >
   <Text style={s.primaryText}>MAKE A SCHEDULE</Text>
@@ -983,9 +1104,34 @@ setTimeout(() => {
   </View>
 )}
 <Pressable
-  onPress={() => {
-    // we will wire this to the suggested schedule next
-  }}
+  onPress={async () => {
+  const suggestion = await getSuggestedSchedule({
+    goalTitle: title,
+    why,
+    barriers: whyBarriers,
+  });
+
+  if (!suggestion) {
+    Alert.alert(
+      "Couldn't create a schedule",
+      "Try again or make your schedule manually."
+    );
+    return;
+  }
+
+  setScheduleType(suggestion.type);
+
+  if (suggestion.type === "repeat") {
+    setScheduleDays(
+      suggestion.days.map((day) => ({
+        day,
+        times: [suggestion.time],
+      }))
+    );
+  }
+
+  setShowScheduleBuilder(true);
+}}
   style={{
     paddingVertical: 12,
     alignItems: 'center',
@@ -1057,6 +1203,7 @@ setTimeout(() => {
   initialDate={new Date()}
   onCancel={() => setShowTimePicker(false)}
   onAdd={(date) => {
+    setOneTimeDate(date);
     setShowTimePicker(false);
 
     const formatted = date.toLocaleString([], {
