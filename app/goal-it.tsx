@@ -351,13 +351,13 @@ const milestoneDrafts =
       return;
     }
 
-   const milestoneRows = milestoneDrafts.map((milestone) => ({
+   const milestoneRows = milestoneDrafts.map((milestone, index) => ({
   user_id: user.id,
   goal_id: goal.id,
   title: milestone.title,
   description: milestone.description ?? null,
  weight: Math.max(1, Math.min(100, Math.round(Number(milestone.weight)) || 1)),
-  position: milestone.position,
+  position: index,
   status: milestone.position === 0 ? 'active' : 'pending',
 }));
 
