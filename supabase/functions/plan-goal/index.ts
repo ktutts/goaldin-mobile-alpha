@@ -116,8 +116,7 @@ const plan = await dispatchAIRequest(
   systemPrompt,
   userPrompt
 );
-    // Pass "STRATEGY" to route this heavy lifting to Claude 3.5 Sonnet via OpenRouter
-    const plan = await dispatchAIRequest("STRATEGY", systemPrompt, userPrompt);
+    
     return plan;
 
   } catch (error) {
@@ -150,13 +149,33 @@ if (needsAI(title, outcome, why)) {
     why,
     deadline,
   });
+let aiPlan = await buildAIPlan({
+  title,
+  target: outcome,
+  why,
+  deadline,
+});
 
-  if (aiPlan) {
-    return new Response(JSON.stringify(aiPlan), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
+if (!aiPlan) {
+  console.log("AI plan attempt 1 failed — retrying once.");
+
+  aiPlan = await buildAIPlan({
+    title,
+    target: outcome,
+    why,
+    deadline,
+  });
+}
+
+if (aiPlan) {
+  return new Response(JSON.stringify(aiPlan), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+console.log("AI planning failed twice — using local fallback.");
+  
 }
     const target = outcome || title;
 function buildSmartMilestones(

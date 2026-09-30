@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   Alert,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -14,6 +15,7 @@ import {
 } from 'expo-speech-recognition';
 import GoalTimePicker from '@/components/GoalTimePicker';
 import { supabase } from '@/lib/supabase';
+import GoalItButton from '@/components/GOALITBUTTON';
 import {
   buildMilestoneDrafts,
   classifyGoal,
@@ -470,6 +472,12 @@ setTimeout(() => {
 
   return (
     <View style={s.page}>
+      <ScrollView
+  style={{ flex: 1 }}
+  contentContainerStyle={{ flexGrow: 1, paddingBottom: 140 }}
+  showsVerticalScrollIndicator={false}
+  keyboardShouldPersistTaps="handled"
+>
     <Text style={s.brand}>GOAL'D IN</Text>
    {showSuccess && (
   <View
@@ -1160,18 +1168,13 @@ setTimeout(() => {
   style={[s.input, { minHeight: 56, height: 56, paddingVertical: 12 }]}
 />
 
-    <Pressable
-  disabled={saving}
-  style={s.primary}
-  onPress={() => {
-    setShowTimePicker(false);
-    create();
-  }}
->
-  <Text style={s.primaryText}>
-    {saving ? 'BUILDING...' : 'GOAL IT →'}
-  </Text>
-</Pressable>
+    <View style={{ marginTop: 20 }}>
+  <GoalItButton
+    onPress={create}
+    disabled={saving}
+    loading={saving}
+  />
+</View>
 
     <Pressable onPress={() => setStep('why')}>
       <Text style={s.backText}>← Back</Text>
@@ -1233,22 +1236,21 @@ setTimeout(() => {
       multiline
     />
 
-    <Pressable
-      disabled={saving}
-      style={s.primary}
-      onPress={create}
-    >
-      <Text style={s.primaryText}>
-        {saving ? 'BUILDING...' : 'GOAL IT →'}
-      </Text>
-    </Pressable>
+    <GoalItButton
+  disabled={saving}
+  loading={saving}
+  onPress={() => {
+    setShowTimePicker(false);
+    create();
+  }}
+/>
 
     <Pressable onPress={() => setStep('why')}>
       <Text style={s.backText}>← Back</Text>
     </Pressable>
   </>
 )}
-     
+     </ScrollView>
     </View>
   );
 }

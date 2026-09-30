@@ -35,9 +35,13 @@ export async function getAIPlan(input: {
     });
 
     if (error || !data) {
-      console.log('AI planner unavailable — using local planner.');
-      return null;
-    }
+  console.log("AI planner unavailable — using local planner.", {
+    error,
+    data,
+    input,
+  });
+  return null;
+}
 
     return data as AIPlan;
   } catch (error) {

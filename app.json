@@ -7,15 +7,16 @@
     "scheme": "goaldin",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
-    "icon": "./assets/images/goaldin-icon.png",
+    "icon": "./assets/images/goaldin-crown.png",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.mygoaldin.app"
     },
     "android": {
       "package": "com.mygoaldin.app",
+      "versionCode": 2,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/goaldin-icon.png",
+        "foregroundImage": "./assets/images/goaldin-crown.png",
         "backgroundColor": "#090909"
       }
     },

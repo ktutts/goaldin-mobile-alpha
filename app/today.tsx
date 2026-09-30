@@ -14,6 +14,7 @@ import {
 import { router, useFocusEffect } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { Action, Goal } from '@/types/models';
+import GoalItButton from '@/components/GOALITBUTTON';
 import PremiumPressable from '@/components/PremiumPressable';
 import {
   Capacity,
@@ -245,7 +246,7 @@ const completeNextMove = async () => {
         <View style={s.brandRow}>
           <View style={s.brandLeft}>
             <Image
-              source={require('../assets/images/goaldin-icon.png')}
+              source={require('../assets/images/goaldin-crown.png')}
               style={s.brandCrown}
               resizeMode="contain"
             />
@@ -283,22 +284,9 @@ const completeNextMove = async () => {
         </View>
 <View style={s.capacityRow}>
 {/* GOAL IT */}
-        <PremiumPressable
-  style={s.goalItButton}
-  haptic="heavy"
-  goldGlow
+        <GoalItButton
   onPress={() => router.push('/goal-it')}
->
-  <View style={s.goalItButtonInner}>
-    <View style={s.goalItPlus}>
-      <Text style={s.goalItPlusText}>+</Text>
-    </View>
-
-    <Text style={s.goalItButtonText}>GOAL IT</Text>
-
-    <Text style={s.goalItChevron}>›</Text>
-  </View>
-</PremiumPressable>
+/>
 
 </View>
 
