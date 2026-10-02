@@ -135,6 +135,29 @@ async function toggleStep(step: string) {
     });
   }
 }
+async function completeNextMove() {
+  if (!nextMove) return;
+
+  const { error } = await supabase
+    .from('actions')
+    .update({
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+    })
+    .eq('id', nextMove.id);
+
+  if (error) {
+    console.error('Could not complete Next Move:', error);
+    return;
+  }
+
+  setNextMove({
+    ...nextMove,
+    status: 'completed',
+    completed_at: new Date().toISOString(),
+  });
+  await loadWorkspace();
+}
 async function recordProgress() {
   const content = progressText.trim();
 
@@ -487,6 +510,31 @@ const moveProgress =
     </Pressable>
   );
 })}
+{moveProgress === 100 && (
+  <Pressable
+    onPress={completeNextMove}
+    style={{
+      marginTop: 10,
+      minHeight: 52,
+      borderRadius: 12,
+      backgroundColor: '#D8B24A',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 16,
+    }}
+  >
+    <Text
+      style={{
+        color: '#0B0B0B',
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 1,
+      }}
+    >
+      COMPLETE NEXT MOVE
+    </Text>
+  </Pressable>
+)}
               </View>
             ) : null}
           </View>
