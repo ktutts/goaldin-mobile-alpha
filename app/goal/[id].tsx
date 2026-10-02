@@ -1,7 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View, } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams } from 'expo-router';
+import {
+  router,
+  useFocusEffect,
+  useLocalSearchParams,
+} from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { Action, Goal } from '@/types/models';
 import CircularProgress from '../../components/CircularProgress';
@@ -10,6 +14,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getCapacityForDate, capacityLabels } from '@/lib/capacity';
 import Constants from 'expo-constants';
 import { getGoalCoachResponse } from "@/lib/goalCoach";
+import {
+  ExpoSpeechRecognitionModule,
+  useSpeechRecognitionEvent,
+} from 'expo-speech-recognition';
 
 
 type GoalSchedule = {
@@ -67,6 +75,108 @@ const [adaptedCompletedSteps, setAdaptedCompletedSteps] = useState<number[]>([])
   const [showBetterMoveMenu, setShowBetterMoveMenu] = useState(false);
   const [coachInput, setCoachInput] = useState('');
   const [adaptationCompleted, setAdaptationCompleted] = useState(false);
+  const submitCoachInput = async () => {
+  const response = coachInput.trim();
+  if (!response || coachThinking) return;
+
+  setCoachThinking(true);
+
+  try {
+    let workspaceProgress: any[] = [];
+
+if (workspaceMilestone?.id) {
+  const { data: progressData, error: progressError } = await supabase
+    .from('progress_entries')
+    .select('entry_type, content, created_at')
+    .eq('milestone_id', workspaceMilestone.id)
+    .order('created_at', { ascending: true })
+    .limit(20);
+
+  if (progressError) {
+    console.error(
+      'Could not load workspace progress for coach:',
+      progressError
+    );
+  } else {
+    workspaceProgress = progressData ?? [];
+  }
+}
+    const aiResponse = await getGoalCoachResponse({
+      goalTitle: goal?.title ?? '',
+      nextMoveTitle: displayedMoveTitle ?? '',
+      nextMoveMinutes: displayedMoveMinutes ?? null,
+      milestones: milestones.map((m) => m.title),
+      progressEntries: workspaceProgress ?? [],
+      userMessage: response,
+    });
+
+    if (!aiResponse) {
+      setCoachMessage(
+        "I couldn't reach the coach right now. Your progress is still saved."
+      );
+      return;
+    }
+
+    if (aiResponse.proposedMove) {
+      setAdaptedMove({
+  ...aiResponse.proposedMove,
+  minutes: aiResponse.proposedMove.minutes ?? 10,
+});
+      setAdaptedCompletedSteps([]);
+    }
+
+    setCoachMessage(aiResponse.message);
+    // Clean up Course Correction after a successful coach response
+    setCoachInput('');
+    setShowChangedMenu(false);
+  } catch (error) {
+    console.error('GOAL COACH ERROR:', error);
+    setCoachMessage("I couldn't reach the coach right now. Try again.");
+  } finally {
+    setCoachThinking(false);
+  }
+};
+  const [coachListening, setCoachListening] = useState(false);
+
+useSpeechRecognitionEvent('start', () => {
+  setCoachListening(true);
+});
+
+useSpeechRecognitionEvent('end', () => {
+  setCoachListening(false);
+});
+
+useSpeechRecognitionEvent('result', (event) => {
+  const spokenText = event.results?.[0]?.transcript?.trim();
+
+  if (!spokenText) return;
+
+  setCoachInput((current) => {
+    const existing = current.trim();
+
+    return existing
+      ? `${existing} ${spokenText}`
+      : spokenText;
+  });
+});
+const startCoachListening = async () => {
+  const permission =
+    await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+
+  if (!permission.granted) {
+    Alert.alert(
+      'Microphone permission needed',
+      "Allow microphone access to tell GOAL'D IN what's getting in the way."
+    );
+    return;
+  }
+
+  ExpoSpeechRecognitionModule.start({
+    lang: 'en-US',
+    interimResults: true,
+    continuous: false,
+  });
+};
   const deleteGoal = () => {
   if (!goalId) return;
  
@@ -244,6 +354,42 @@ const renewGoal = async () => {
         onPress: () => router.replace(`/goal/${newGoal.id}`),
       },
     ]
+  );
+};
+const toggleNextMoveStep = async (step: string) => {
+  if (!nextPending) return;
+
+  const completedSteps = Array.isArray(nextPending.completed_steps)
+    ? nextPending.completed_steps
+    : [];
+
+  const isCompleted = completedSteps.includes(step);
+
+  const updatedSteps = isCompleted
+    ? completedSteps.filter((item: string) => item !== step)
+    : [...completedSteps, step];
+
+  const { error } = await supabase
+    .from('actions')
+    .update({
+      completed_steps: updatedSteps,
+    })
+    .eq('id', nextPending.id);
+
+  if (error) {
+    Alert.alert('Could not update step', error.message);
+    return;
+  }
+
+  setActions((current) =>
+    current.map((action) =>
+      action.id === nextPending.id
+        ? {
+            ...action,
+            completed_steps: updatedSteps,
+          }
+        : action
+    )
   );
 };
 const completeMove = async (actionId: string) => {
@@ -502,7 +648,36 @@ if (currentMilestone) {
 
     void load();
   }, [goalId]);
+useFocusEffect(
+  useCallback(() => {
+    if (!goalId) return;
 
+    let cancelled = false;
+
+    const refreshActionProgress = async () => {
+      const { data, error } = await supabase
+        .from('actions')
+        .select('*')
+        .eq('goal_id', goalId)
+        .order('position', { ascending: true });
+
+      if (error) {
+        console.error('Could not refresh action progress:', error);
+        return;
+      }
+
+      if (!cancelled) {
+        setActions((data ?? []) as Action[]);
+      }
+    };
+
+    void refreshActionProgress();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [goalId])
+);
   useEffect(() => {
     if (!timerRunning) return;
     const id = setInterval(() => {
@@ -522,13 +697,45 @@ if (currentMilestone) {
   const nextPending = actions.find((a) => a.status === 'pending');
  const displayedMoveTitle =
   adaptedMove?.title ?? nextPending?.title;
+const workspaceMilestoneId = nextPending?.milestone_id ?? null;
 
+const workspaceMilestone = workspaceMilestoneId
+  ? milestones.find((m) => m.id === workspaceMilestoneId)
+  : milestones.find((m) => m.status === 'active');
 const displayedMoveMinutes =
   adaptedMove?.minutes ?? nextPending?.estimated_minutes;
 
 const displayedMoveSteps =
   adaptedMove?.steps ??
-  (Array.isArray(nextPending?.steps) ? nextPending.steps : []); 
+  (Array.isArray(nextPending?.steps) ? nextPending.steps : []);
+  const savedCompletedSteps = Array.isArray(nextPending?.completed_steps)
+  ? nextPending.completed_steps
+  : [];
+
+const unfinishedDisplayedSteps = displayedMoveSteps.filter(
+  (step: string, index: number) => {
+    if (adaptedMove) {
+      return !adaptedCompletedSteps.includes(index);
+    }
+
+    return !savedCompletedSteps.includes(step);
+  }
+);
+
+const nextTwoSteps = unfinishedDisplayedSteps.slice(0, 2);
+
+const displayedCompletedCount = adaptedMove
+  ? adaptedCompletedSteps.length
+  : displayedMoveSteps.filter((step: string) =>
+      savedCompletedSteps.includes(step)
+    ).length;
+
+const displayedMoveProgress =
+  displayedMoveSteps.length > 0
+    ? Math.round(
+        (displayedCompletedCount / displayedMoveSteps.length) * 100
+      )
+    : 0; 
 const completedMilestones = milestones.filter(
   (m) => m.status === 'completed'
 ).length;
@@ -893,77 +1100,127 @@ if (!Notifications) return;
             <>
             <Text style={s.nextMoveTitle}>{displayedMoveTitle}</Text>
               <Text style={s.nextMoveMeta}>{displayedMoveMinutes ? `${displayedMoveMinutes} MIN` : 'READY WHEN YOU ARE'}</Text>
-{Array.isArray(displayedMoveSteps) && displayedMoveSteps.length > 0 && (
-  <View style={{ marginTop: 14, marginBottom: 14, gap: 10 }}>
-    {displayedMoveSteps.map((step: string, index: number) => (
+{displayedMoveSteps.length > 0 ? (
+  <View style={{ marginTop: 14 }}>
+    <View
+      style={{
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 10,
+      }}
+    >
+      <Text
+        style={{
+          color: '#8E8E93',
+          fontSize: 11,
+          fontWeight: '900',
+          letterSpacing: 1,
+        }}
+      >
+        UP NEXT
+      </Text>
+
+      <Text
+        style={{
+          color: '#D8B24A',
+          fontSize: 12,
+          fontWeight: '900',
+        }}
+      >
+        {displayedMoveProgress}% MOVE
+      </Text>
+    </View>
+<Text
+  style={{
+    color: '#8E8E93',
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 10,
+  }}
+>
+  {displayedCompletedCount} of {displayedMoveSteps.length} actions complete
+</Text>
+    {nextTwoSteps.map((step: string, index: number) => (
       <Pressable
   key={`${step}-${index}`}
- onPress={async () => {
-  if (adaptedMove) {
-    setAdaptedCompletedSteps((current) =>
-      current.includes(index)
-        ? current.filter((i) => i !== index)
-        : [...current, index]
-    );
-    return;
-  }
-
-  const current = nextPending.completed_steps ?? [];
-  const updated = current.includes(index)
-    ? current.filter((i) => i !== index)
-    : [...current, index];
-
-  const { error } = await supabase
-    .from('actions')
-    .update({ completed_steps: updated })
-    .eq('id', nextPending.id);
-
-  if (!error) {
-    setActions((currentActions) =>
-      currentActions.map((action) =>
-        action.id === nextPending.id
-          ? { ...action, completed_steps: updated }
-          : action
-      )
-    );
-  }
-}}
+  onPress={() => toggleNextMoveStep(step)}
   style={{
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 10,
+    marginBottom: 10,
   }}
 >
-        <Text
+        <View
           style={{
-            color: '#D8B24A',
-            fontSize: 18,
-            fontWeight: '900',
+            width: 8,
+            height: 8,
+            borderRadius: 4,
+            borderWidth: 1,
+            borderColor: '#D8B24A',
+            marginTop: 6,
+            marginRight: 10,
           }}
-        >
-          {adaptedMove
-  ? adaptedCompletedSteps.includes(index)
-    ? '✓'
-    : '○'
-  : nextPending.completed_steps?.includes(index)
-    ? '✓'
-    : '○'}
-        </Text>
+        />
 
         <Text
           style={{
-            color: '#E8E8E8',
-            fontSize: 16,
-            lineHeight: 22,
             flex: 1,
+            color: '#D6D6D8',
+            fontSize: 14,
+            lineHeight: 20,
           }}
         >
           {step}
         </Text>
       </Pressable>
     ))}
+
+    {unfinishedDisplayedSteps.length === 0 ? (
+      <Text
+        style={{
+          color: '#D8B24A',
+          fontWeight: '900',
+          marginTop: 4,
+        }}
+      >
+        ALL ACTIONS COMPLETE ✓
+      </Text>
+    ) : null}
+
+    {workspaceMilestone ? (
+      <Pressable
+        onPress={() => {
+          router.push({
+            pathname: '/goal/milestone/[milestoneId]',
+            params: {
+              milestoneId: workspaceMilestone.id,
+            },
+          });
+        }}
+        style={{
+          marginTop: 8,
+          borderWidth: 1,
+          borderColor: '#D8B24A',
+          borderRadius: 12,
+          paddingVertical: 12,
+          alignItems: 'center',
+        }}
+      >
+        <Text
+          style={{
+            color: '#D8B24A',
+            fontWeight: '900',
+            letterSpacing: 1,
+          }}
+        >
+          OPEN WORKSPACE →
+        </Text>
+      </Pressable>
+    ) : null}
   </View>
-)}
+) : null}
+  
            <Pressable
   style={s.startMoveButton}
   onPress={() => {
@@ -984,10 +1241,8 @@ if (!Notifications) return;
 </Pressable>
 <Pressable
   onPress={() => {
-    setCoachMessage(
-      "No problem. What's getting in your way?"
-    );
-    setShowObstacleMenu(true);
+    setShowChangedMenu((current) => !current);
+    setCoachInput('');
   }}
   style={{
     marginTop: 10,
@@ -996,6 +1251,7 @@ if (!Notifications) return;
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
+    justifyContent: 'center',
   }}
 >
   <Text
@@ -1003,110 +1259,12 @@ if (!Notifications) return;
       color: '#D8B24A',
       fontWeight: '800',
       letterSpacing: 1,
+      textAlign: 'center',
     }}
   >
-    CAN'T DO THIS?
+    COURSE CORRECTION
   </Text>
 </Pressable>
-{showObstacleMenu && (
-  <View
-    style={{
-      marginTop: 10,
-      gap: 8,
-    }}
-  >
-    {[
-      "I DON'T HAVE ENOUGH TIME",
-      'TOO DIFFICULT',
-      'WRONG TIME',
-      'SOMETHING CHANGED',
-      "THIS ISN'T THE RIGHT MOVE",
-    ].map((reason) => (
-      <Pressable
-        key={reason}
-        onPress={() => {
-          setShowReminderMenu(false);
-setShowTimerMenu(false);
-if (reason === "I DON'T HAVE ENOUGH TIME") {
-  const shorterMinutes = Math.max(
-    1,
-    Math.min(5, Math.floor((nextPending.estimated_minutes ?? 10) / 2))
-  );
-
-  setAdaptedMove({
-    title: nextPending.title,
-    minutes: shorterMinutes,
-    steps: [
-      `Spend ${shorterMinutes} minutes making the smallest useful amount of progress on this move.`,
-    ],
-  });
-
-  setAdaptedCompletedSteps([]);
-
-  setCoachMessage(
-    `Got it. Keep the goal. Let's make "${nextPending.title}" smaller so you can still move forward today.`
-  );
-} else if (reason === 'TOO DIFFICULT') {
-  const originalSteps = nextPending.steps ?? [];
-
-  const easierSteps =
-    Array.isArray(originalSteps) && originalSteps.length > 0
-      ? [originalSteps[0]]
-      : [`Start with the easiest part of "${nextPending.title}".`];
-
-  setAdaptedMove({
-    title: `Start: ${nextPending.title}`,
-    minutes: Math.max(
-      5,
-      Math.floor((nextPending.estimated_minutes ?? 10) / 2)
-    ),
-    steps: easierSteps,
-  });
-
-  setAdaptedCompletedSteps([]);
-
-  setCoachMessage(
-    `Got it. Let's make "${nextPending.title}" easier. Just start with the first piece.`
-  );
-  } else if (reason === 'WRONG TIME') {
-  setAdaptedMove(null);
-
-  setCoachMessage(
-    `Got it. The move still works — now just isn't the right time. Let's find a better time for "${nextPending.title}".`
-  );
-
-  setShowTimerMenu(false);
-  setShowReminderMenu(true);
-} else if (reason === 'SOMETHING CHANGED') {
-  setCoachMessage("Got it. What changed?");
-  setShowPriorityMenu(true);
-} else {
-  setCoachMessage(`Got it. ${reason}. Let's adjust from here.`);
-}
-
-  setShowObstacleMenu(false);
-}}
-        style={{
-          borderWidth: 1,
-          borderColor: '#3A3426',
-          borderRadius: 10,
-          paddingVertical: 11,
-          paddingHorizontal: 14,
-        }}
-      >
-        <Text
-          style={{
-            color: '#FFFFFF',
-            fontSize: 14,
-            fontWeight: '700',
-          }}
-        >
-          {reason}
-        </Text>
-      </Pressable>
-    ))}
-  </View>
-)}
 {showChangedMenu && (
   <View
     style={{
@@ -1121,83 +1279,121 @@ if (reason === "I DON'T HAVE ENOUGH TIME") {
         fontWeight: '900',
         letterSpacing: 1,
         marginBottom: 4,
+        }}
+>
+  WHAT'S GETTING IN THE WAY?
+</Text>
+  {[
+  'I HAVE LESS TIME',
+  'TOO DIFFICULT',
+  'WRONG TIME',
+  'SOMETHING CHANGED',
+  "THIS ISN'T THE RIGHT MOVE",
+].map((reason) => {
+  const selected = coachInput === reason;
+
+  return (
+    <Pressable
+      key={reason}
+      onPress={() => setCoachInput(reason)}
+      style={{
+        borderWidth: 1,
+        borderColor: selected ? '#D8B24A' : '#3A3426',
+        backgroundColor: selected ? '#1A1812' : '#111111',
+        borderRadius: 12,
+        paddingVertical: 12,
+        paddingHorizontal: 14,
       }}
     >
-      WHAT CHANGED?
-    </Text>
-
-    {[
-      'I HAVE LESS TIME',
-      'I NEED TO DO THIS LATER',
-      'THIS GOT HARDER',
-      'MY PRIORITIES CHANGED',
-    ].map((change) => (
-      <Pressable
-        key={change}
-        onPress={() => {
-        setShowChangedMenu(false);
-
-          if (change === 'I HAVE LESS TIME') {
-            const shorterMinutes = Math.max(
-              1,
-              Math.min(
-                5,
-                Math.floor((nextPending.estimated_minutes ?? 10) / 2)
-              )
-            );
-
-            setAdaptedMove({
-              title: nextPending.title,
-              minutes: shorterMinutes,
-              steps: [
-                `Spend ${shorterMinutes} minutes making useful progress on this move.`,
-              ],
-            });
-
-            setAdaptedCompletedSteps([]);
-            setCoachMessage(
-              `Got it. Let's make "${nextPending.title}" smaller for today.`
-            );
-          } else if (change === 'I NEED TO DO THIS LATER') {
-            setAdaptedMove(null);
-            setCoachMessage(
-              `Got it. The move still works. Let's find a better time for "${nextPending.title}".`
-            );
-            setShowReminderMenu(true);
-          } else if (change === 'THIS GOT HARDER') {
-            setCoachMessage(
-              `Got it. Let's make "${nextPending.title}" easier to start.`
-            );
-          } else if (change === 'MY PRIORITIES CHANGED') {
-  setAdaptedMove(null);
-
-  setCoachMessage(
-    `Got it. Priorities changed. Let's decide what matters most now.`
-  );
-
-  setShowPriorityMenu(true);
-}
-        }}
+      <Text
         style={{
-          borderWidth: 1,
-          borderColor: '#3A3426',
-          borderRadius: 10,
-          paddingVertical: 11,
-          paddingHorizontal: 14,
+          color: selected ? '#D8B24A' : '#FFFFFF',
+          fontSize: 14,
+          fontWeight: '800',
         }}
       >
-        <Text
-          style={{
-            color: '#FFFFFF',
-            fontSize: 14,
-            fontWeight: '700',
-          }}
-        >
-          {change}
-        </Text>
-      </Pressable>
-    ))}
-  </View>
+        {reason}
+      </Text>
+    </Pressable>
+  );
+})}
+<View
+  style={{
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#3A3426',
+    borderRadius: 14,
+    backgroundColor: '#111111',
+    padding: 12,
+  }}
+>
+  <TextInput
+    value={coachInput}
+    onChangeText={setCoachInput}
+    placeholder="Tell GOAL'D IN what's getting in the way..."
+    placeholderTextColor="#777777"
+    multiline
+    editable={!coachThinking}
+    autoCapitalize="sentences"
+    selectionColor="#D8B24A"
+    returnKeyType="send"
+    onSubmitEditing={submitCoachInput}
+    style={{
+      color: '#FFFFFF',
+      fontSize: 16,
+      lineHeight: 22,
+      minHeight: 90,
+      width: '100%',
+      textAlignVertical: 'top',
+    }}
+  />
+
+  <Pressable
+    onPress={startCoachListening}
+    disabled={coachThinking}
+    style={{
+      alignSelf: 'flex-end',
+      paddingVertical: 8,
+      paddingHorizontal: 10,
+      marginTop: 4,
+    }}
+  >
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontSize: 14,
+        fontWeight: '900',
+      }}
+    >
+      {coachListening ? '🎙 LISTENING...' : '🎙 SPEAK'}
+    </Text>
+  </Pressable>
+</View>
+<Pressable
+  onPress={submitCoachInput}
+  disabled={!coachInput.trim() || coachThinking}
+  style={{
+    marginTop: 10,
+    backgroundColor:
+      !coachInput.trim() || coachThinking ? '#3A3426' : '#D8B24A',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  }}
+>
+  <Text
+    style={{
+      color:
+        !coachInput.trim() || coachThinking ? '#777777' : '#0B0B0B',
+      fontWeight: '900',
+      letterSpacing: 1,
+    }}
+  >
+    {coachThinking ? 'COACHING...' : 'ASK COACH'}
+  </Text>
+</Pressable>
+</View>
 )}
 {showPriorityMenu && (
   <View
@@ -1244,15 +1440,50 @@ if (reason === "I DON'T HAVE ENOUGH TIME") {
 
   const response = coachInput.trim();
 setCoachThinking(true);
+let workspaceProgress: Array<{
+  entry_type: string;
+  content: string;
+  created_at?: string;
+}> = [];
+
+if (workspaceMilestone?.id) {
+  const { data: progressData, error: progressError } = await supabase
+    .from('progress_entries')
+    .select('entry_type, content, created_at')
+    .eq('milestone_id', workspaceMilestone.id)
+    .order('created_at', { ascending: true })
+    .limit(20);
+
+  if (progressError) {
+    console.error(
+      'Could not load workspace progress for coach:',
+      progressError
+    );
+  } else {
+    workspaceProgress = progressData ?? [];
+  }
+}
 const aiResponse = await getGoalCoachResponse({
   goalTitle: goal?.title ?? "",
   nextMoveTitle: displayedMoveTitle ?? "",
   nextMoveMinutes: displayedMoveMinutes ?? null,
+  milestones: milestones.map((m) => m.title),
+  progressEntries: workspaceProgress,
   userMessage: response,
 })
+if (!aiResponse) {
+  setCoachMessage(
+    "I couldn't reach the coach right now. Your progress is still saved."
+  );
+  setCoachThinking(false);
+  return;
+}
 console.log("GOAL COACH AI RESPONSE:", aiResponse);
 if (aiResponse.proposedMove) {
-  setAdaptedMove(aiResponse.proposedMove);
+setAdaptedMove({
+  ...aiResponse.proposedMove,
+  minutes: aiResponse.proposedMove.minutes ?? 10,
+});
   setAdaptedCompletedSteps([]);
 }
  setCoachMessage(aiResponse.message);
@@ -1392,19 +1623,23 @@ if (aiResponse.proposedMove) {
     const aiResponse = await getGoalCoachResponse({
       goalTitle: goal?.title ?? '',
       nextMoveTitle: nextPending?.title ?? '',
-      nextMoveMinutes: nextPending?.minutes ?? null,
+      nextMoveMinutes: nextPending?.estimated_minutes ?? null,
       userMessage: option,
     });
 
     console.log('GOAL COACH QUICK OPTION:', aiResponse);
 
-    if (aiResponse.proposedMove) {
-      setAdaptedMove(aiResponse.proposedMove);
+    if (aiResponse?.proposedMove) {
+  setAdaptedMove({
+    ...aiResponse.proposedMove,
+    minutes: aiResponse.proposedMove.minutes ?? 10,
+  });
+     
       setAdaptedCompletedSteps([]);
     }
 
-    setCoachMessage(aiResponse.message);
-    if (aiResponse.action === 'RESCHEDULE') {
+    setCoachMessage(aiResponse?.message ?? "");
+    if (aiResponse?.action === 'RESCHEDULE') {
   setShowReminderMenu(true);
 }
   } catch (error) {
@@ -1636,7 +1871,9 @@ if (aiResponse.proposedMove) {
                   )}
                 </View>
               )}
-</>
+              
+
+            </>
           ):(
             <>
 
@@ -1732,7 +1969,8 @@ if (aiResponse.proposedMove) {
 
             </>
           )}
-          </View>
+        </View>
+        
           {goal?.status === 'completed' && (
            <View
   style={{
@@ -1873,7 +2111,9 @@ if (aiResponse.proposedMove) {
     </Text>
 
     {milestones.map((milestone, index) => {
-      const isCurrent = milestone.status === 'active';
+      const isCurrent =
+  milestone.id === workspaceMilestone?.id ||
+  milestone.status === 'active';
       const isLast = index === milestones.length - 1;
 
       return (
@@ -1987,6 +2227,39 @@ if (aiResponse.proposedMove) {
                 Target: {new Date(milestone.target_date).toLocaleDateString()}
               </Text>
             ) : null}
+            {isCurrent ? (
+  <Pressable
+    onPress={() => {
+  router.push({
+    pathname: '/goal/milestone/[milestoneId]',
+    params: {
+      milestoneId: milestone.id,
+    },
+  });
+}}
+    style={{
+      marginTop: 12,
+      alignSelf: 'flex-start',
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: '#3A321F',
+      backgroundColor: '#111111',
+    }}
+  >
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontSize: 12,
+        fontWeight: '900',
+        letterSpacing: 1,
+      }}
+    >
+      OPEN WORKSPACE →
+    </Text>
+  </Pressable>
+) : null}
           </View>
         </View>
       );

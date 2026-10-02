@@ -1,8 +1,9 @@
-import "https://deno.land/x/types/index.d.ts";{
+import "https://deno.land/x/types/index.d.ts";
 import {
   dispatchAIRequest,
   chooseModelRole,
-} from "../shared/router.ts";
+} from "../shared/router";
+function buildFirstMove(title: string, target: string) {
   const text = `${title} ${target}`.toLowerCase();
 
   if (
@@ -57,7 +58,7 @@ import {
 }
 // MAKE SURE THIS IS AT THE VERY TOP OF INDEX.TS (Line 2):
 // import { dispatchAIRequest } from "../_shared/router.ts";
-function buildFirstMove(title: string, target: string) {
+
 function needsAI(title: string, target: string, why: string) {
   const text = `${title} ${target} ${why}`.toLowerCase();
 
@@ -110,7 +111,14 @@ CRITICAL: You MUST return a single valid JSON object strictly adhering to this f
   },
   "coachMessage": "Short encouraging message"
 }`;
+const userPrompt = `
+Goal: ${input.title}
+Target: ${input.target}
+Why: ${input.why}
+Deadline: ${input.deadline ?? "No deadline provided"}
 
+Create a practical GOAL'D IN path for this goal.
+`;
 const plan = await dispatchAIRequest(
   chooseModelRole("PLANNING"),
   systemPrompt,
@@ -124,7 +132,7 @@ const plan = await dispatchAIRequest(
     return null; // Returning null allows local buildFirstMove() fallback
   }
 }
-}
+
 Deno.serve(async (req) => {
   try {
     const body = await req.json();
@@ -143,12 +151,7 @@ Deno.serve(async (req) => {
       );
     }
 if (needsAI(title, outcome, why)) {
-  const aiPlan = await buildAIPlan({
-    title,
-    target: outcome,
-    why,
-    deadline,
-  });
+ 
 let aiPlan = await buildAIPlan({
   title,
   target: outcome,

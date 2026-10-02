@@ -23,7 +23,18 @@ export type Action = {
   user_id: string;
   title: string;
   steps?: string[];
-  completed_steps?: number[];
+  completed_steps?: string[];
+  tools?: (
+  | 'CHECKLIST'
+  | 'TIMER'
+  | 'REMINDER'
+  | 'SCHEDULE'
+  | 'RECORD_PROGRESS'
+  | 'CAMERA'
+  | 'NOTES'
+  | 'COUNTER'
+  | 'NUMBER_ENTRY'
+)[];
   description: string | null;
   status: 'pending' | 'completed' | 'skipped';
   estimated_minutes: number | null;

@@ -556,7 +556,7 @@ setTimeout(() => {
   }}
 >
   <Text style={{ color: '#D4AF37', fontWeight: '700' }}>
-    🎤 SPEAK YOUR GOAL
+    🎙 SPEAK YOUR GOAL
   </Text>
 </Pressable>
 <Pressable

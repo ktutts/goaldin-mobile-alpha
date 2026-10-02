@@ -14,11 +14,19 @@ export type GoalCoachResponse = {
     minutes: number | null;
     steps: string[];
   } | null;
-};export async function getGoalCoachResponse(input: {
+};
+export async function getGoalCoachResponse(input: {
   goalTitle: string;
   nextMoveTitle: string;
   nextMoveMinutes?: number | null;
   milestones?: string[];
+
+  progressEntries?: Array<{
+    entry_type: string;
+    content: string;
+    created_at?: string;
+  }>;
+
   userMessage: string;
 }): Promise<GoalCoachResponse | null> {
   try {

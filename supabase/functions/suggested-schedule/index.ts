@@ -3,7 +3,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import {
   dispatchAIRequest,
   chooseModelRole,
-} from "../shared/router.ts";
+} from "../shared/router";
 
 type ScheduleRequest = {
   goalTitle: string;
