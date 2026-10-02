@@ -270,8 +270,12 @@ const moveProgress =
         <Pressable
           onPress={() => router.back()}
           style={{
-            marginBottom: 22,
-          }}
+  marginTop: 24,
+  marginBottom: 22,
+  paddingVertical: 12,
+  paddingHorizontal: 8,
+  alignSelf: "flex-start",
+}}
         >
           <Text
             style={{
