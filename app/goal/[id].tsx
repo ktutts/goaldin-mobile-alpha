@@ -665,10 +665,19 @@ useFocusEffect(
         console.error('Could not refresh action progress:', error);
         return;
       }
+const { data: milestoneData, error: milestoneError } = await supabase
+  .from('milestones')
+  .select('*')
+  .eq('goal_id', goalId)
+  .order('position', { ascending: true });
 
-      if (!cancelled) {
-        setActions((data ?? []) as Action[]);
-      }
+if (milestoneError) {
+  console.error('Could not refresh milestones:', milestoneError);
+}
+     if (!cancelled) {
+  setActions((data ?? []) as Action[]);
+  setMilestones(milestoneData ?? []);
+}
     };
 
     void refreshActionProgress();

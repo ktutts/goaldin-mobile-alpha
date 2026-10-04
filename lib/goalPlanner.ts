@@ -10,6 +10,12 @@ export type MilestoneDraft = {
   description: string | null;
   weight: number;
   position: number;
+  nextMove?: {
+    title: string;
+    estimatedMinutes?: number | null;
+    whyThisMove: string | null;
+    steps: string[];
+  } | null;
 };
 
 type ClassifyGoalInput = {

@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { supabase } from '@/lib/supabase';
+import { completeNextMove as completeNextMoveEngine } from '../../../lib/completeNextMove';
 type ProgressEntryType =
   | 'result'
   | 'learned'
@@ -138,25 +139,15 @@ async function toggleStep(step: string) {
 async function completeNextMove() {
   if (!nextMove) return;
 
-  const { error } = await supabase
-    .from('actions')
-    .update({
-      status: 'completed',
-      completed_at: new Date().toISOString(),
-    })
-    .eq('id', nextMove.id);
+  try {
+    const result = await completeNextMoveEngine(nextMove.id);
 
-  if (error) {
+    console.log('Progression result:', result);
+
+    router.back();
+  } catch (error) {
     console.error('Could not complete Next Move:', error);
-    return;
   }
-
-  setNextMove({
-    ...nextMove,
-    status: 'completed',
-    completed_at: new Date().toISOString(),
-  });
-  await loadWorkspace();
 }
 async function recordProgress() {
   const content = progressText.trim();
@@ -510,7 +501,7 @@ const moveProgress =
     </Pressable>
   );
 })}
-{moveProgress === 100 && (
+{moveProgress >= 100 && (
   <Pressable
     onPress={completeNextMove}
     style={{

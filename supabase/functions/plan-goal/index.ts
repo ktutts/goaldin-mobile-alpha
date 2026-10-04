@@ -1,8 +1,8 @@
-import "https://deno.land/x/types/index.d.ts";
+
 import {
   dispatchAIRequest,
   chooseModelRole,
-} from "../shared/router";
+} from "../shared/router.ts";
 function buildFirstMove(title: string, target: string) {
   const text = `${title} ${target}`.toLowerCase();
 
@@ -14,7 +14,7 @@ function buildFirstMove(title: string, target: string) {
   ) {
     return {
       title: 'Complete 3 sets of a basic strength exercise',
-      estimatedMinutes: 10,
+      
     };
   }
 
@@ -25,7 +25,7 @@ function buildFirstMove(title: string, target: string) {
   ) {
     return {
       title: 'Pick one small area and completely clear it',
-      estimatedMinutes: 10,
+     
     };
   }
 
@@ -36,7 +36,7 @@ function buildFirstMove(title: string, target: string) {
   ) {
     return {
       title: 'Write down your current numbers and choose one thing to improve',
-      estimatedMinutes: 10,
+      
     };
   }
 
@@ -47,13 +47,13 @@ function buildFirstMove(title: string, target: string) {
   ) {
     return {
       title: 'Spend 10 focused minutes on the first lesson',
-      estimatedMinutes: 10,
+      
     };
   }
 
   return {
     title: `Take one concrete step toward ${target}`,
-    estimatedMinutes: 10,
+  
   };
 }
 // MAKE SURE THIS IS AT THE VERY TOP OF INDEX.TS (Line 2):
@@ -95,19 +95,50 @@ async function buildAIPlan(input: {
 }) {
   try {
     const systemPrompt = `You are GOAL'D IN's executive strategy coach.
-Your job is to turn a user's goal into a practical path that feels specific, motivating, and immediate.
+Your job is to turn a user's goal into a practical path that feels specific, motivating, and immediately actionable.
 
-CRITICAL: You MUST return a single valid JSON object strictly adhering to this format:
+CRITICAL RULES:
+- Return ONE valid JSON object only.
+- Every milestone MUST contain a nextMove.
+- Every nextMove MUST contain a specific title, estimatedMinutes, whyThisMove, and actionable steps.
+- Never create a milestone without a nextMove.
+- Each nextMove should be something the user can actually begin doing.
+- Give each nextMove 2-6 concrete checklist steps.
+- estimatedMinutes must be a realistic number.
+- The firstMove should match the nextMove of the first milestone.
+
+Return exactly this structure:
+
 {
   "planningMode": "milestones",
   "needsClarification": false,
   "clarificationQuestion": null,
   "milestones": [
-    { "title": "First Milestone", "targetDate": null }
+    {
+      "title": "Specific milestone",
+      "description": "What completing this stage accomplishes",
+      "targetDate": null,
+      "nextMove": {
+        "title": "Specific action",
+        "estimatedMinutes": 15,
+        "whyThisMove": "Why this action matters now",
+        "steps": [
+          "Concrete step 1",
+          "Concrete step 2",
+          "Concrete step 3"
+        ]
+      }
+    }
   ],
   "firstMove": {
-    "title": "Immediate Actionable Title",
-    "steps": ["Step 1", "Step 2", "Step 3"]
+    "title": "Same action as the first milestone's nextMove",
+    "estimatedMinutes": 15,
+    "whyThisMove": "Why this action matters now",
+    "steps": [
+      "Concrete step 1",
+      "Concrete step 2",
+      "Concrete step 3"
+    ]
   },
   "coachMessage": "Short encouraging message"
 }`;
@@ -150,7 +181,7 @@ Deno.serve(async (req) => {
         }
       );
     }
-if (needsAI(title, outcome, why)) {
+if (true) {
  
 let aiPlan = await buildAIPlan({
   title,

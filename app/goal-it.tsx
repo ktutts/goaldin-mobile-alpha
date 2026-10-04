@@ -358,7 +358,7 @@ const milestoneDrafts =
   description: milestone.description ?? null,
  weight: Math.max(1, Math.min(100, Math.round(Number(milestone.weight)) || 1)),
   position: index,
-  status: milestone.position === 0 ? 'active' : 'pending',
+  status: index === 0 ? 'active' : 'pending',
 }));
 
 const { data: createdMilestones, error: milestoneError } = await supabase
@@ -388,24 +388,42 @@ const firstMove =
         }
       : {
           title: `Take the first useful step toward ${cleanTitle}`,
-          estimatedMinutes: 5,
+          estimatedMinutes: 15,
           steps: [],
         };
   })();
 
-const acts = [
-  {
-    user_id: user.id,
-    goal_id: goal.id,
-    milestone_id: firstMilestone?.id ?? null,
-    title: firstMove.title,
-    status: 'pending',
-    estimated_minutes: firstMove.estimatedMinutes,
-    steps: firstMove.steps ?? [],
-    type: (firstMove.estimatedMinutes ?? 10) >= 10 ? 'timed' : 'task',
-    position: 0,
-  },
-];
+const acts = [...(createdMilestones ?? [])]
+  .sort((a, b) => a.position - b.position)
+  .map((createdMilestone, index) => {
+    const milestoneDraft = milestoneDrafts[createdMilestone.position];
+
+    const plannedMove =
+      index === 0
+        ? firstMove
+        : milestoneDraft?.nextMove;
+
+    return {
+      user_id: user.id,
+      goal_id: goal.id,
+      milestone_id: createdMilestone.id,
+
+      title:
+        plannedMove?.title ??
+        `Take the next step toward ${createdMilestone.title}`,
+
+      status: 'pending',
+
+      estimated_minutes: null,
+
+      steps:
+        plannedMove?.steps ?? [],
+
+      type: 'task',
+
+      position: index,
+    };
+  });
 const { error: actionError } = await supabase
   .from('actions')
   .insert(acts);

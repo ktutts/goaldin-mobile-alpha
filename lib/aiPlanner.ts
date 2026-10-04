@@ -17,7 +17,7 @@ export type AIPlan = {
 
   firstMove: {
   title: string;
-  estimatedMinutes: number | null;
+  estimatedMinutes?: number | null;
   whyThisMove: string | null;
   steps: string[];
 } | null;
@@ -42,7 +42,7 @@ export async function getAIPlan(input: {
   });
   return null;
 }
-
+console.log('AI PLAN RAW:', JSON.stringify(data, null, 2));
     return data as AIPlan;
   } catch (error) {
     console.log('AI planner failed — using local planner.', error);
