@@ -108,7 +108,18 @@ if (nextMilestone) {const { error: completeMilestoneError } = await supabase
 if (completeMilestoneError) {
   throw new Error(completeMilestoneError.message);
 }
+const { error: clearActiveMilestonesError } = await supabase
+  .from('milestones')
+  .update({
+    status: 'pending',
+  })
+  .eq('goal_id', completedMove.goal_id)
+  .eq('status', 'active')
+  .neq('id', nextMilestone.id);
 
+if (clearActiveMilestonesError) {
+  throw new Error(clearActiveMilestonesError.message);
+}
 const { error: activateMilestoneError } = await supabase
   .from('milestones')
   .update({

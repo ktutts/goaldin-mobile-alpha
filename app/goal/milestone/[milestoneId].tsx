@@ -183,6 +183,14 @@ async function recordProgress() {
 
     setProgressEntries((current) => [data, ...current]);
     setProgressText('note');
+    if (progressType === 'blocker') {
+  console.log('BLOCKER RECORDED:', {
+    goalId: milestone.goal_id,
+    milestoneId: milestone.id,
+    actionId: nextMove?.id ?? null,
+    content,
+  });
+}
   } catch (err) {
     console.error('Could not record progress:', err);
   } finally {
@@ -501,8 +509,10 @@ const moveProgress =
     </Pressable>
   );
 })}
-{moveProgress >= 100 && (
-  <Pressable
+
+              </View>
+            ) : null}
+            {(steps.length === 0 || moveProgress >= 100) && (  <Pressable
     onPress={completeNextMove}
     style={{
       marginTop: 10,
@@ -526,8 +536,6 @@ const moveProgress =
     </Text>
   </Pressable>
 )}
-              </View>
-            ) : null}
           </View>
         ) : (
           <View

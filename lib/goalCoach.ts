@@ -8,17 +8,37 @@ export type GoalCoachResponse = {
     | "RESCHEDULE"
     | "ADJUST_PATH"
     | "RECONSIDER_GOAL";
-
+moveStatus: "unchanged" | "completed" | "needs_adaptation";
+completedSteps?: string[];
+ recordedProgress?: {
+  entryType:
+    | "result"
+    | "learned"
+    | "decision"
+    | "blocker"
+    | "need"
+    | "note";
+  content: string;
+} | null;
+need?: {
+  title: string;
+  category?: string | null;
+  status: "open" | "resolved";
+  solutionType?: "product" | "service" | "information" | "person" | "other";
+} | null;
   proposedMove?: {
     title: string;
     minutes: number | null;
     steps: string[];
   } | null;
+
 };
 export async function getGoalCoachResponse(input: {
   goalTitle: string;
   nextMoveTitle: string;
   nextMoveMinutes?: number | null;
+  nextMoveSteps?: string[];
+completedSteps?: string[];
   milestones?: string[];
 
   progressEntries?: Array<{

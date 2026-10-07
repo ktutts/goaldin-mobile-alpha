@@ -202,6 +202,11 @@ const completeNextMove = async () => {
         : 'Good evening';
 
   const goalData = goals.map(goal => {
+    console.log('TODAY GOAL:', goal.title, {
+  id: goal.id,
+  status: goal.status,
+  is_practice: goal.is_practice,
+});
     const goalActions = actions
       .filter(action => action.goal_id === goal.id)
       .sort((a, b) => a.position - b.position);
@@ -333,13 +338,34 @@ const completeNextMove = async () => {
                     </Text>
                   </View>
 
-<CircularProgress
-  progress={progress}
-  size={72}
-  strokeWidth={7}
-  label=""
-
-/>
+{goal.is_practice ? (
+  <View
+    style={{
+      width: 72,
+      height: 72,
+      alignItems: 'center',
+      justifyContent: 'center',
+    }}
+  >
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontSize: 52,
+        fontWeight: '700',
+        lineHeight: 58,
+      }}
+    >
+      ∞
+    </Text>
+  </View>
+) : (
+  <CircularProgress
+    progress={progress}
+    size={72}
+    strokeWidth={7}
+    label=""
+  />
+)}
                 </View>
 
                 <Text style={s.goalTitle} numberOfLines={2}>

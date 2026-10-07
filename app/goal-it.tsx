@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -8,7 +8,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import {
   ExpoSpeechRecognitionModule,
   useSpeechRecognitionEvent,
@@ -156,7 +156,20 @@ const getNotifications = async () => {
   }
 };
 export default function GoalIt() {
+  const { buildFromGoal, parentGoalId, continueAsPractice } =
+  useLocalSearchParams<{
+    buildFromGoal?: string;
+    parentGoalId?: string;
+    continueAsPractice?: string;
+  }>();
+const isBuildingFromGoal = Boolean(parentGoalId);
     const [title, setTitle] = useState('');
+    useEffect(() => {
+  if (buildFromGoal) {
+    setTitle(buildFromGoal);
+  }
+}, [buildFromGoal]);
+    const isContinuingPractice = continueAsPractice === 'true';
     const [speechTarget, setSpeechTarget] =
   useState<'title' | 'why'>('title');
     useSpeechRecognitionEvent("result", (event) => {
@@ -341,6 +354,7 @@ const milestoneDrafts =
         user_id: user.id,
         title: cleanTitle,
         status: 'active',
+        parent_goal_id: parentGoalId ?? null,
       })
       .select()
       .single();
@@ -350,7 +364,12 @@ const milestoneDrafts =
       Alert.alert('Could not create goal', error?.message);
       return;
     }
-
+if (isContinuingPractice) {
+  console.log('CREATING ONGOING PRACTICE:', {
+    parentGoalId,
+    title: cleanTitle,
+  });
+}
    const milestoneRows = milestoneDrafts.map((milestone, index) => ({
   user_id: user.id,
   goal_id: goal.id,
@@ -547,11 +566,48 @@ setTimeout(() => {
 
 {step === 'goal' && (
   <>
-    <Text style={s.h1}>What are we accomplishing?</Text>
-
-    <Text style={s.copy}>
-      Tell me what you want to make happen. You don't need to know every step yet.
+  {buildFromGoal && (
+  <View
+    style={{
+      marginBottom: 18,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: '#D8B24A',
+      borderRadius: 12,
+    }}
+  >
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontSize: 12,
+        fontWeight: '900',
+        letterSpacing: 1.2,
+        marginBottom: 6,
+      }}
+    >
+      BUILDING ON
     </Text>
+
+    <Text
+      style={{
+        color: '#FFFFFF',
+        fontSize: 17,
+        fontWeight: '700',
+      }}
+    >
+      {buildFromGoal}
+    </Text>
+  </View>
+)}
+   <Text style={s.h1}>
+  {isBuildingFromGoal ? "What's next?" : 'What are we accomplishing?'}
+</Text>
+
+<Text style={s.copy}>
+  {isBuildingFromGoal
+    ? `You accomplished ${buildFromGoal}. What do you want to build from here?`
+    : "Tell me what you want to make happen. You don't need to know every step yet."}
+</Text>
 
     <TextInput
       value={title}

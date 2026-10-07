@@ -105,6 +105,10 @@ if (workspaceMilestone?.id) {
       goalTitle: goal?.title ?? '',
       nextMoveTitle: displayedMoveTitle ?? '',
       nextMoveMinutes: displayedMoveMinutes ?? null,
+      nextMoveSteps: displayedMoveSteps,
+completedSteps: Array.isArray(nextPending?.completed_steps)
+  ? nextPending.completed_steps
+  : [],
       milestones: milestones.map((m) => m.title),
       progressEntries: workspaceProgress ?? [],
       userMessage: response,
@@ -116,15 +120,144 @@ if (workspaceMilestone?.id) {
       );
       return;
     }
+if (aiResponse.recordedProgress && workspaceMilestone?.id) {
+  const {
+  data: { user },
+} = await supabase.auth.getUser();
+if (
+  aiResponse.need &&
+  !aiResponse.recordedProgress &&
+  workspaceMilestone?.id
+) {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-    if (aiResponse.proposedMove) {
-      setAdaptedMove({
-  ...aiResponse.proposedMove,
-  minutes: aiResponse.proposedMove.minutes ?? 10,
-});
-      setAdaptedCompletedSteps([]);
+  if (user) {
+    const { error: needError } = await supabase
+      .from('progress_entries')
+      .insert({
+        user_id: user.id,
+        goal_id: goal?.id,
+        milestone_id: workspaceMilestone.id,
+        action_id: nextPending?.id ?? null,
+        entry_type: 'note',
+        content: aiResponse.need.title,
+        metadata: {
+          need: aiResponse.need,
+        },
+      });
+
+    if (needError) {
+      console.error('Could not record need:', needError);
+    } else {
+      console.log('NEED RECORDED:', aiResponse.need);
     }
+  }
+}
+if (!user) {
+  console.error('Could not record progress: no authenticated user');
+  return;
+}
+  const { error: recordError } = await supabase
+    .from('progress_entries')
+    .insert({
+  user_id: user.id,
+  goal_id: goal?.id,
+  milestone_id: workspaceMilestone.id,
+  action_id: nextPending?.id ?? null,
+  entry_type: aiResponse.recordedProgress.entryType,
+  content: aiResponse.recordedProgress.content,
+  metadata: aiResponse.need
+  ? {
+      need: aiResponse.need,
+    }
+  : {},
+});
 
+  if (recordError) {
+    console.error('Could not record progress:', recordError);
+  } else {
+    console.log(
+      'PROGRESS RECORDED:',
+      aiResponse.recordedProgress
+    );
+  }
+}
+   if (aiResponse.proposedMove) {
+  const updatedMove = {
+    ...aiResponse.proposedMove,
+    minutes: aiResponse.proposedMove.minutes ?? 10,
+  };
+
+  setAdaptedMove(updatedMove);
+  setAdaptedCompletedSteps([]);
+
+  if (nextPending?.id) {
+    const { error: updateError } = await supabase
+      .from('actions')
+      .update({
+        title: updatedMove.title,
+        steps: updatedMove.steps ?? [],
+        estimated_minutes: updatedMove.minutes,
+        completed_steps: [],
+      })
+      .eq('id', nextPending.id);
+
+    if (updateError) {
+      console.error('Could not persist adapted Next Move:', updateError);
+    } else {
+      console.log('ADAPTED NEXT MOVE SAVED:', updatedMove);
+    }
+  }
+}
+if (
+  aiResponse.completedSteps?.length &&
+  nextPending?.id &&
+  displayedMoveSteps.length
+) {
+  const existingCompleted = Array.isArray(nextPending.completed_steps)
+    ? nextPending.completed_steps
+    : [];
+
+  const validCompleted = aiResponse.completedSteps.filter(
+    (step) =>
+      displayedMoveSteps.includes(step) &&
+      !existingCompleted.includes(step)
+  );
+
+  const updatedCompleted = [
+    ...new Set([...existingCompleted, ...validCompleted]),
+  ];
+
+  if (validCompleted.length > 0) {
+    const { error: checklistError } = await supabase
+      .from('actions')
+      .update({
+        completed_steps: updatedCompleted,
+      })
+      .eq('id', nextPending.id);
+
+    if (checklistError) {
+      console.error('Could not update checklist:', checklistError);
+    } else {
+      setActions((current) =>
+        current.map((action) =>
+          action.id === nextPending.id
+            ? { ...action, completed_steps: updatedCompleted }
+            : action
+        )
+      );
+      const allStepsComplete =
+  displayedMoveSteps.length > 0 &&
+  updatedCompleted.length === displayedMoveSteps.length;
+
+if (allStepsComplete) {
+  await completeMove(nextPending.id);
+}
+    }
+  }
+}
     setCoachMessage(aiResponse.message);
     // Clean up Course Correction after a successful coach response
     setCoachInput('');
@@ -166,7 +299,7 @@ const startCoachListening = async () => {
   if (!permission.granted) {
     Alert.alert(
       'Microphone permission needed',
-      "Allow microphone access to tell GOAL'D IN what's getting in the way."
+      "Allow microphone access to tell GOAL'D IN what happened."
     );
     return;
   }
@@ -234,6 +367,24 @@ const archiveGoal = async () => {
   } catch {
     Alert.alert('Could not share achievement');
   }
+};
+const keepGoalGoing = async () => {
+  if (!goal) return;
+
+  const { error } = await supabase
+    .from('goals')
+    .update({
+      status: 'active',
+      is_practice: true,
+    })
+    .eq('id', goal.id);
+
+  if (error) {
+    Alert.alert('Could not continue goal', error.message);
+    return;
+  }
+
+  router.replace('/today');
 };
 const renewGoal = async () => {
   if (!goal) return;
@@ -391,7 +542,16 @@ const toggleNextMoveStep = async (step: string) => {
         : action
     )
   );
+  const allStepsComplete =
+  !isCompleted &&
+  displayedMoveSteps.length > 0 &&
+  updatedSteps.length === displayedMoveSteps.length;
+
+if (allStepsComplete) {
+  await completeMove(nextPending.id);
+}
 };
+
 const completeMove = async (actionId: string) => {
   const { error: actionError } = await supabase
     .from('actions')
@@ -704,6 +864,8 @@ if (milestoneError) {
   }, [timerRunning]);
 
   const nextPending = actions.find((a) => a.status === 'pending');
+const goalComplete = !nextPending;
+const isPractice = goal?.is_practice === true;
  const displayedMoveTitle =
   adaptedMove?.title ?? nextPending?.title;
 const workspaceMilestoneId = nextPending?.milestone_id ?? null;
@@ -989,18 +1151,163 @@ if (!Notifications) return;
   </Text>
 </Pressable>
           <Text style={s.eyebrow}>
-  {!nextPending ? 'GOAL COMPLETE ✓' : 'ACTIVE GOAL'}
+  {isPractice
+    ? 'ONGOING PRACTICE'
+    : !nextPending
+      ? 'GOAL COMPLETE ✓'
+      : 'ACTIVE GOAL'}
 </Text>
           <Text style={s.title}>{goal?.title}</Text>
-          <CircularProgress
- progress={goalProgress}
-  size={160}
-  strokeWidth={12}
-  label={!nextPending ? "GOAL'D IN ✓" : "IN PROGRESS"}
-/>
+          {isPractice ? (
+  <View
+    style={{
+      width: 100,
+      height: 100,
+      alignItems: 'center',
+      justifyContent: 'center',
+    }}
+  >
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontSize: 72,
+        fontWeight: '700',
+        lineHeight: 80,
+      }}
+    >
+      ∞
+    </Text>
+
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontSize: 9,
+        fontWeight: '900',
+        letterSpacing: 1,
+        textAlign: 'center',
+      }}
+    >
+      ONGOING PRACTICE
+    </Text>
+  </View>
+) : (
+  <CircularProgress
+    progress={goalProgress}
+    size={100}
+    strokeWidth={11}
+    label={nextPending ? "IN PROGRESS" : "GOAL'D IN ✓"}
+  />
+)}
           <Text style={s.subtitle}>{goal?.title || ''}</Text>
         </View>
+{goalComplete && !isPractice && (
+  <View
+    style={{
+      marginTop: 18,
+      marginBottom: 18,
+      padding: 18,
+      borderWidth: 1,
+      borderColor: '#D8B24A',
+      borderRadius: 16,
+      backgroundColor: '#111111',
+    }}
+  >
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontSize: 13,
+        fontWeight: '900',
+        letterSpacing: 1.5,
+        marginBottom: 8,
+      }}
+    >
+      WHAT'S NEXT?
+    </Text>
 
+    <Text
+      style={{
+        color: '#FFFFFF',
+        fontSize: 20,
+        fontWeight: '800',
+        marginBottom: 8,
+      }}
+    >
+      You reached this goal.
+    </Text>
+
+    <Text
+      style={{
+        color: '#AAAAAA',
+        fontSize: 14,
+        lineHeight: 20,
+      }}
+    >
+      What you built here can end here, continue, or become something more.
+    </Text>
+    <View style={{ marginTop: 16, gap: 10 }}>
+  <Pressable
+  onPress={() =>
+  router.push({
+    pathname: '/goal-it',
+    params: {
+      buildFromGoal: goal?.title ?? '',
+      parentGoalId: goal?.id ?? '',
+    },
+  })
+}
+    style={{
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      backgroundColor: '#D8B24A',
+    }}
+  >
+    <Text
+      style={{
+        color: '#000000',
+        fontWeight: '900',
+        textAlign: 'center',
+      }}
+    >
+      BUILD ON THIS
+    </Text>
+  </Pressable>
+
+  <Pressable
+  onPress={keepGoalGoing}
+  >
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontWeight: '900',
+        textAlign: 'center',
+      }}
+    >
+      KEEP IT GOING
+    </Text>
+  </Pressable>
+
+  <Pressable
+  onPress={() => {
+    router.back();
+  }}
+  style={{
+      paddingVertical: 12,
+    }}
+  >
+    <Text
+      style={{
+        color: '#888888',
+        fontWeight: '700',
+        textAlign: 'center',
+      }}
+    >
+      I'M GOOD HERE ✓
+    </Text>
+  </Pressable>
+</View>
+  </View>
+)}
         <View style={s.nextMoveCard}>
           {coachMessage && (
   <View
@@ -1069,14 +1376,7 @@ if (!Notifications) return;
       Want to keep going, or call today's move complete?
     </Text>
 
-    <Pressable
-      style={s.startMoveButton}
-      onPress={() => {
-        setAdaptationCompleted(false);
-      }}
-    >
-      <Text style={s.startMoveText}>KEEP GOING</Text>
-    </Pressable>
+  
 
     <Pressable
       onPress={() => {
@@ -1185,8 +1485,8 @@ if (!Notifications) return;
       </Pressable>
     ))}
 
-    {unfinishedDisplayedSteps.length === 0 ? (
-      <Text
+{displayedMoveSteps.length > 0 &&
+unfinishedDisplayedSteps.length === 0 ? (      <Text
         style={{
           color: '#D8B24A',
           fontWeight: '900',
@@ -1196,58 +1496,32 @@ if (!Notifications) return;
         ALL ACTIONS COMPLETE ✓
       </Text>
     ) : null}
-
-    {workspaceMilestone ? (
-      <Pressable
-        onPress={() => {
-          router.push({
-            pathname: '/goal/milestone/[milestoneId]',
-            params: {
-              milestoneId: workspaceMilestone.id,
-            },
-          });
-        }}
-        style={{
-          marginTop: 8,
-          borderWidth: 1,
-          borderColor: '#D8B24A',
-          borderRadius: 12,
-          paddingVertical: 12,
-          alignItems: 'center',
-        }}
-      >
-        <Text
-          style={{
-            color: '#D8B24A',
-            fontWeight: '900',
-            letterSpacing: 1,
-          }}
-        >
-          OPEN WORKSPACE →
-        </Text>
-      </Pressable>
-    ) : null}
-  </View>
+{displayedMoveSteps.length === 0 && nextPending ? (
+  <Pressable
+    onPress={() => completeMove(nextPending.id)}
+    style={{
+      marginTop: 12,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      backgroundColor: '#D8B24A',
+    }}
+  >
+    <Text
+      style={{
+        color: '#000000',
+        fontWeight: '900',
+        textAlign: 'center',
+      }}
+    >
+      COMPLETE NEXT MOVE
+    </Text>
+  </Pressable>
+) : null}
+      </View>
 ) : null}
   
-           <Pressable
-  style={s.startMoveButton}
-  onPress={() => {
-  if (adaptedMove) {
-    setCoachMessage(
-      "Nice work. You adapted instead of stopping. That still moves you forward."
-    );
-    setAdaptedMove(null);
-   setAdaptedCompletedSteps([]);
-    setAdaptationCompleted(true); 
-  } else {
-    completeMove(nextPending.id);
-    
-  }
-}}
->
-  <Text style={s.startMoveText}>MARK COMPLETE</Text>
-</Pressable>
+           
 <Pressable
   onPress={() => {
     setShowChangedMenu((current) => !current);
@@ -1271,7 +1545,7 @@ if (!Notifications) return;
       textAlign: 'center',
     }}
   >
-    COURSE CORRECTION
+    TELL GOALD IN
   </Text>
 </Pressable>
 {showChangedMenu && (
@@ -1281,17 +1555,12 @@ if (!Notifications) return;
       gap: 8,
     }}
   >
-    <Text
-      style={{
-        color: '#D9B84C',
-        fontSize: 14,
-        fontWeight: '900',
-        letterSpacing: 1,
-        marginBottom: 4,
-        }}
->
-  WHAT'S GETTING IN THE WAY?
-</Text>
+   
+<View
+  style={{
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8, }}>
   {[
   'I HAVE LESS TIME',
   'TOO DIFFICULT',
@@ -1299,8 +1568,8 @@ if (!Notifications) return;
   'SOMETHING CHANGED',
   "THIS ISN'T THE RIGHT MOVE",
 ].map((reason) => {
-  const selected = coachInput === reason;
-
+    const selected = coachInput === reason;
+  
   return (
     <Pressable
       key={reason}
@@ -1310,8 +1579,8 @@ if (!Notifications) return;
         borderColor: selected ? '#D8B24A' : '#3A3426',
         backgroundColor: selected ? '#1A1812' : '#111111',
         borderRadius: 12,
-        paddingVertical: 12,
-        paddingHorizontal: 14,
+        paddingVertical: 9,
+        paddingHorizontal: 11,
       }}
     >
       <Text
@@ -1326,6 +1595,7 @@ if (!Notifications) return;
     </Pressable>
   );
 })}
+ </View>
 <View
   style={{
     marginTop: 12,
@@ -1339,7 +1609,7 @@ if (!Notifications) return;
   <TextInput
     value={coachInput}
     onChangeText={setCoachInput}
-    placeholder="Tell GOAL'D IN what's getting in the way..."
+    placeholder="Progress, a problem, something you learned, or anything that changed..."
     placeholderTextColor="#777777"
     multiline
     editable={!coachThinking}
@@ -1399,7 +1669,7 @@ if (!Notifications) return;
       letterSpacing: 1,
     }}
   >
-    {coachThinking ? 'COACHING...' : 'ASK COACH'}
+    {coachThinking ? 'THINKING...' : 'CONTINUE'}
   </Text>
 </Pressable>
 </View>
@@ -2050,6 +2320,8 @@ setAdaptedMove({
     </Text>
   </Pressable>
 
+{!isPractice && (
+  <>
   <Pressable
     onPress={renewGoal}
     style={{
@@ -2069,6 +2341,7 @@ setAdaptedMove({
         letterSpacing: 1,
       }}
     >
+      
       RENEW GOAL
     </Text>
   </Pressable>
@@ -2093,6 +2366,9 @@ setAdaptedMove({
       ARCHIVE ACHIEVEMENT
     </Text>
   </Pressable>
+  </>
+
+)}
 </View>
               
     )}
@@ -2247,9 +2523,9 @@ setAdaptedMove({
   });
 }}
     style={{
-      marginTop: 12,
+      marginTop: 14,
       alignSelf: 'flex-start',
-      paddingVertical: 8,
+      paddingVertical: 10,
       paddingHorizontal: 12,
       borderRadius: 10,
       borderWidth: 1,
