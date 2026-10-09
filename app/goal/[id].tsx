@@ -39,7 +39,8 @@ const getNotifications = async () => {
 export default function GoalDetail() {
   const params = useLocalSearchParams<{ id?: string }>();
   const goalId = Array.isArray(params.id) ? params.id[0] : params.id;
-
+  const [suggestedCompletedSteps, setSuggestedCompletedSteps] =
+  useState<string[]>([]);
   const [goal, setGoal] = useState<Goal | null>(null);
   const [actions, setActions] = useState<Action[]>([]);
   const [loading, setLoading] = useState(true);
@@ -183,6 +184,17 @@ if (!user) {
       aiResponse.recordedProgress
     );
   }
+}
+if (aiResponse.suggestedCompletedSteps?.length) {
+  const validSuggestions = aiResponse.suggestedCompletedSteps.filter(
+    (step: string) =>
+      displayedMoveSteps.includes(step) &&
+      !nextPending?.completed_steps?.includes(step)
+  );
+
+  setSuggestedCompletedSteps(validSuggestions);
+} else {
+  setSuggestedCompletedSteps([]);
 }
    if (aiResponse.proposedMove) {
   const updatedMove = {
@@ -1450,7 +1462,7 @@ if (!Notifications) return;
 >
   {displayedCompletedCount} of {displayedMoveSteps.length} actions complete
 </Text>
-    {nextTwoSteps.map((step: string, index: number) => (
+    {displayedMoveSteps.map((step: string, index: number) => (
       <Pressable
   key={`${step}-${index}`}
   onPress={() => toggleNextMoveStep(step)}
@@ -1484,7 +1496,44 @@ if (!Notifications) return;
         </Text>
       </Pressable>
     ))}
+{suggestedCompletedSteps.length > 0 && (
+  <View style={{
+    padding: 14,
+    marginVertical: 12,
+    borderWidth: 1,
+    borderColor: '#D8B24A',
+    borderRadius: 12,
+  }}>
+    <Text style={{
+      color: '#D8B24A',
+      fontWeight: '700',
+      marginBottom: 8,
+    }}>
+      GOAL'D IN RECOGNIZED YOUR PROGRESS
+    </Text>
 
+    {suggestedCompletedSteps.map((step) => (
+      <Pressable
+        key={step}
+        onPress={async () => {
+          await toggleNextMoveStep(step);
+          setSuggestedCompletedSteps((current) =>
+            current.filter((item) => item !== step)
+          );
+        }}
+        style={{ paddingVertical: 8 }}
+      >
+        <Text style={{ color: '#FFFFFF' }}>
+          ☐ {step}
+        </Text>
+      </Pressable>
+    ))}
+
+    <Text style={{ color: '#999999', fontSize: 12 }}>
+      Tap each step to confirm you completed it.
+    </Text>
+  </View>
+)}
 {displayedMoveSteps.length > 0 &&
 unfinishedDisplayedSteps.length === 0 ? (      <Text
         style={{
@@ -2397,8 +2446,9 @@ setAdaptedMove({
 
     {milestones.map((milestone, index) => {
       const isCurrent =
-  milestone.id === workspaceMilestone?.id ||
-  milestone.status === 'active';
+  index === milestones.findIndex(
+    (m) => m.status !== 'completed'
+  );
       const isLast = index === milestones.length - 1;
 
       return (

@@ -9,7 +9,7 @@ export type GoalCoachResponse = {
     | "ADJUST_PATH"
     | "RECONSIDER_GOAL";
 moveStatus: "unchanged" | "completed" | "needs_adaptation";
-completedSteps?: string[];
+suggestedCompletedSteps?: string[];
  recordedProgress?: {
   entryType:
     | "result"

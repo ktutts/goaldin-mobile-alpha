@@ -515,6 +515,25 @@ setTimeout(() => {
   showsVerticalScrollIndicator={false}
   keyboardShouldPersistTaps="handled"
 >
+  <Pressable
+  onPress={() => router.replace('/today')}
+  style={{
+    alignSelf: 'flex-start',
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    marginBottom: 8,
+  }}
+>
+  <Text
+    style={{
+      color: '#D8B24A',
+      fontSize: 14,
+      fontWeight: '900',
+    }}
+  >
+    ← BACK TO GOALS
+  </Text>
+</Pressable>
     <Text style={s.brand}>GOAL'D IN</Text>
    {showSuccess && (
   <View

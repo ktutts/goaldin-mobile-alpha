@@ -383,7 +383,7 @@ const completeNextMove = async () => {
 
                 <View style={s.nextRow}>
                   <Text style={s.nextText} numberOfLines={1}>
-                    Next: {nextMove?.title || 'Goal ready'}
+Next: {nextMove?.title || (goal.is_practice ? 'Keep it going' : 'Goal ready')}
                   </Text>
                 </View>
               </Pressable>

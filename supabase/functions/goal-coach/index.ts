@@ -26,7 +26,7 @@ type CoachResponse = {
     | "ADJUST_PATH"
     | "RECONSIDER_GOAL";
 moveStatus: "unchanged" | "completed" | "needs_adaptation";
-completedSteps?: string[];
+suggestedCompletedSteps?: string[];
   recordedProgress?: {
     entryType: "result" | "learned" | "decision" | "blocker" | "note";
     content: string;
@@ -281,7 +281,7 @@ CHECKLIST PROGRESS:
 
 The current Next Move may contain individual action steps.
 
-When the user's message clearly proves that one or more EXISTING checklist steps have been completed, return those exact step strings in "completedSteps".
+When the user's message clearly proves that one or more EXISTING checklist steps have been completed, return those exact step strings in "suggestedCompletedSteps".
 
 Only mark a step complete when the user's message provides reasonable evidence that the action actually happened.
 
@@ -303,20 +303,32 @@ Existing steps:
 
 User: "I added up all the parts and they come to about $8,400."
 Return:
-"completedSteps": ["Total the costs of parts from your research."]
+"suggestedCompletedSteps": ["Total the costs of parts from your research."]
 
 User: "I totaled the parts and figured labor will be around $3,000."
 Return the two matching completed steps.
 
 User: "I'm going to price the labor tomorrow."
 Return:
-"completedSteps": []
+"suggestedCompletedSteps": []
 
 If the message does not clearly complete an existing checklist step, return:
-"completedSteps": []
+"suggestedCompletedSteps": []
 
-Do not create new checklist steps in completedSteps.
+Do not create new checklist steps in suggestedCompletedSteps.
+CHECKLIST CONFIRMATION:
 
+suggestedCompletedSteps contains existing checklist steps that the
+user's message clearly indicates they have accomplished.
+
+Only suggest steps from the current Next Move checklist.
+Copy their text exactly.
+
+These are suggestions awaiting user confirmation.
+Never mark checklist steps complete or advance the Next Move
+based solely on an AI suggestion.
+
+The user decides which steps to check off.
 Recording progress and completing checklist steps are separate decisions. The same user message may create a recordedProgress entry AND complete one or more existing checklist steps.
 RECORD WHAT HAPPENED:
 
@@ -410,7 +422,7 @@ CHECKLIST-FIRST RULE:
 When the user reports something they did, first determine whether it satisfies one or more existing checklist steps.
 
 If it does:
-1. Return the exact matching step or steps in "completedSteps".
+1. Return the exact matching step or steps in "suggestedCompletedSteps".
 2. Record any useful result, learning, decision, blocker, or need.
 3. Keep the current Next Move unless the new information makes the remaining checklist actions impossible, irrelevant, or unsafe.
 
@@ -422,7 +434,7 @@ Existing step: "Open the hood and check the engine condition."
 User: "I opened the hood and inspected the engine. It doesn't crank or start."
 
 Correct behavior:
-- completedSteps includes "Open the hood and check the engine condition."
+- suggestedCompletedSteps includes "Open the hood and check the engine condition."
 - recordedProgress records that the engine does not crank or start.
 - action is KEEP_MOVE.
 - proposedMove is null.
@@ -583,7 +595,7 @@ RETURN JSON IN EXACTLY THIS STRUCTURE:
   "message": "string",
   "action": "KEEP_MOVE | ADJUST_MOVE | RESCHEDULE | ADJUST_PATH | RECONSIDER_GOAL",
   "moveStatus": "unchanged" | "completed" | "needs_adaptation",
-  "completedSteps": ["exact existing checklist step"],
+  "suggestedCompletedSteps": ["exact existing checklist step"],
   "recordedProgress": {
   "entryType": "result | learned | decision | blocker | need | note",
   "content": "string"
