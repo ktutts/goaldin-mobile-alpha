@@ -3,6 +3,7 @@ import {
   dispatchAIRequest,
   chooseModelRole,
 } from "../shared/router.ts";
+
 function buildFirstMove(title: string, target: string) {
   const text = `${title} ${target}`.toLowerCase();
 
@@ -57,7 +58,6 @@ function buildFirstMove(title: string, target: string) {
   };
 }
 // MAKE SURE THIS IS AT THE VERY TOP OF INDEX.TS (Line 2):
-// import { dispatchAIRequest } from "../_shared/router.ts";
 
 function needsAI(title: string, target: string, why: string) {
   const text = `${title} ${target} ${why}`.toLowerCase();
@@ -98,6 +98,84 @@ async function buildAIPlan(input: {
 Your job is to turn a user's goal into a practical path that feels specific, motivating, and immediately actionable.
 
 CRITICAL RULES:
+UNDERSTAND THE USER'S WHY AND TIME HORIZON:
+
+The user's WHY explains what matters to them, not necessarily how the goal should be completed.
+
+A WHY may be simple ("I need this done"), practical ("My family needs reliable transportation"), or deeply personal ("I want stability and security").
+
+Respect simple answers. Do not force emotional exploration or invent hidden motivations.
+
+When the WHY is vague, recognize that the user may still be discovering what they want. Help them begin with a useful, achievable Next Move rather than demanding complete certainty.
+
+Consider the goal, desired outcome, WHY, and deadline together.
+
+Choose a realistic planning horizon:
+- SHORT: A task that may take minutes, hours, or days.
+- MEDIUM: A goal requiring weeks or months.
+- LONG: A goal that may require years.
+- ONGOING: A practice or direction without a fixed finish line.
+
+Do not inflate simple tasks into complicated plans.
+Do not compress major life changes into unrealistic deadlines.
+A deadline is a constraint, not proof that the goal can be completed by then.
+
+For ongoing goals, emphasize repeatable actions, consistency, and meaningful progress rather than a final 100% completion.
+
+For uncertain goals, begin with a small exploratory Next Move that helps the user discover their direction.
+
+Use the WHY to make milestones and Next Moves personally relevant, but never assume the user's emotional state or circumstances beyond what they shared.
+DEEPER WHY AND MEANINGFUL ACTION:
+
+Distinguish between what the user wants to change and why
+that change matters to them.
+
+When the WHY reveals a deeper desired outcome, use that
+outcome to guide the milestones and Next Moves.
+
+Example:
+Goal: Feel better.
+WHY: I want more energy to spend time with my family.
+
+Do not create only a generic self-care plan.
+Include practical actions that support better energy AND
+meaningful opportunities to spend time with family.
+
+The deeper WHY gives the Path purpose, but do not replace
+the user's stated goal or invent motivations.
+
+If the user simply says "I need this done," respect that.
+Create the most direct, useful Path without requiring
+further emotional exploration.
+
+Avoid unnecessary planning exercises.
+Whenever possible, the first Next Move should create
+real-world progress rather than another list of things
+to think about.
+Before choosing the first Next Move, ask:
+Will completing this action create meaningful progress toward
+the user's stated goal and WHY?
+
+Prefer an action the user can actually perform over an
+unnecessary planning or brainstorming exercise.
+
+If important information is missing, ask one useful question
+or suggest a small discovery action.
+
+Use existing tools such as checklists, reminders, and timers
+when they genuinely help the user act.
+
+Do not force timers or estimated durations onto the user.
+A Next Move may take minutes, hours, days, or longer.
+
+For ongoing goals, make the first action achievable while
+keeping the larger Path open to continued growth and change.
+For ongoing goals, build repeatable actions that serve
+the user's WHY without inventing a final completion date.
+
+For goals with uncertain timelines, recommend a realistic
+starting approach that can adapt as the user learns more.
+Every plan should respect the user's time and make the next useful action clear.
 - Return ONE valid JSON object only.
 - Every milestone MUST contain a nextMove.
 - Every nextMove MUST contain a specific title, estimatedMinutes, whyThisMove, and actionable steps.
@@ -106,13 +184,21 @@ CRITICAL RULES:
 - Give each nextMove 2-6 concrete checklist steps.
 - estimatedMinutes must be a realistic number.
 - The firstMove should match the nextMove of the first milestone.
+CLARIFICATION RULE:
+If the user's goal is too ambiguous to create a useful, specific Path, ask ONE short, helpful clarification question.
 
+Set needsClarification to true and provide clarificationQuestion plus 2-4 practical clarificationOptions.
+
+Do not ask when the goal and WHY already provide enough direction.
+Do not require clarification for simple or exploratory goals.
+If clarification is needed, do not invent a detailed Path before the user answers.
 Return exactly this structure:
 
 {
   "planningMode": "milestones",
   "needsClarification": false,
   "clarificationQuestion": null,
+  "clarificationOptions": [],
   "milestones": [
     {
       "title": "Specific milestone",
@@ -207,7 +293,7 @@ if (aiPlan) {
     headers: { "Content-Type": "application/json" },
   });
 }
-
+console.log("AI PLAN RESULT:", JSON.stringify(aiPlan));
 console.log("AI planning failed twice — using local fallback.");
   
 }

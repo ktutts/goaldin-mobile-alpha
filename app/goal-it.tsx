@@ -204,7 +204,7 @@ const startListening = async () => {
   const [saving, setSaving] = useState(false);
 const [showSuccess, setShowSuccess] = useState(false);
 const [step, setStep] =
-  useState<'goal' | 'outcome' | 'deadline' | 'why'>('goal');
+  useState<'goal' | 'outcome' | 'deadline' | 'why' | 'clarification'>('goal');
 
 const [outcome, setOutcome] = useState('');
 const [deadline, setDeadline] = useState('');
@@ -227,7 +227,25 @@ const [showCustomPicker, setShowCustomPicker] = useState(false);
 const [why, setWhy] = useState('');
 const [whyReasons, setWhyReasons] = useState<string[]>([]);
 const [whyBarriers, setWhyBarriers] = useState<string[]>([]);
+const [whyFollowUp, setWhyFollowUp] = useState('');
 const [showWhyText, setShowWhyText] = useState(false);
+const [clarificationQuestion, setClarificationQuestion] = useState<string | null>(null);
+const [clarificationAnswer, setClarificationAnswer] = useState('');
+const [clarificationOptions, setClarificationOptions] = useState<string[]>([]);
+const whyFollowUpQuestion =
+  whyReasons.includes('I want to feel better')
+    ? 'What would feeling better allow you to do?'
+    : whyReasons.includes('I need this handled')
+    ? 'What would tell you this is taken care of?'
+    : whyReasons.includes('It will make life easier')
+    ? 'What would become easier in your everyday life?'
+    : whyReasons.includes('I want to prove I can do it')
+    ? 'What would achieving this mean to you?'
+    : whyReasons.includes('Someone else is counting on me')
+    ? 'Who benefits from this, and what matters most to them?'
+    : whyReasons.includes('This opens the door to something bigger')
+    ? 'What possibility are you hoping this creates?'
+    : '';
 function toggleScheduleDay(day: number) {
   setScheduleDays((current) => {
     const exists = current.some((item) => item.day === day);
@@ -296,6 +314,12 @@ const cleanWhy = [
   why.trim()
     ? `User note: ${why.trim()}`
     : '',
+    whyFollowUp.trim()
+  ? `Follow-up insight (${whyFollowUpQuestion}): ${whyFollowUp.trim()}`
+  : '',
+  clarificationAnswer.trim()
+  ? `Additional clarification (${clarificationQuestion ?? 'Goal details'}): ${clarificationAnswer.trim()}`
+  : '',
 ]
   .filter(Boolean)
   .join('\n');
@@ -311,7 +335,17 @@ const aiPlan = await getAIPlan({
   why: cleanWhy || null,
   deadline: deadline || null,
 });
-
+if (
+!clarificationQuestion &&  aiPlan?.needsClarification &&
+  aiPlan.clarificationQuestion
+) {
+  setClarificationQuestion(aiPlan.clarificationQuestion);
+  setClarificationOptions(aiPlan.clarificationOptions ?? []);
+  setClarificationAnswer('');
+  setStep('clarification');
+  setSaving(false);
+  return;
+}
 const classification = aiPlan
   ? {
       horizon: aiPlan.horizon,
@@ -428,9 +462,9 @@ const acts = [...(createdMilestones ?? [])]
       milestone_id: createdMilestone.id,
 
       title:
-        plannedMove?.title ??
-        `Take the next step toward ${createdMilestone.title}`,
-
+  plannedMove?.title?.trim() ||
+  createdMilestone.description?.trim() ||
+  createdMilestone.title,
       status: 'pending',
 
       estimated_minutes: null,
@@ -733,11 +767,13 @@ setTimeout(() => {
 )}
 {step === 'why' && (
   <>
-    <Text style={s.h1}>Why does this matter?</Text>
+    <Text style={s.h1}>What would you like to be different?</Text>
 
-    <Text style={s.copy}>
-      A clear reason makes the goal easier to stay connected to.
-    </Text>
+<Text style={s.copy}>
+  You don't need the perfect answer.
+  Tell us what matters right now.
+  We'll help you explore why.
+</Text>
     <Text style={[s.copy, { marginTop: 18, fontWeight: '800', color: '#D8B24A' }]}>
   PICK WHAT FITS
 </Text>
@@ -795,6 +831,37 @@ setTimeout(() => {
   }}
   >
   MY OWN WORDS
+  {whyFollowUpQuestion !== '' && (
+  <View style={{ marginTop: 24, marginBottom: 12 }}>
+    <Text
+      style={{
+        color: '#D8B24A',
+        fontSize: 16,
+        fontWeight: '700',
+        marginBottom: 10,
+      }}
+    >
+      {whyFollowUpQuestion}
+    </Text>
+
+    <TextInput
+      value={whyFollowUp}
+      onChangeText={setWhyFollowUp}
+      placeholder="Your answer (optional)"
+      placeholderTextColor="#888888"
+      multiline
+      style={{
+        color: '#FFFFFF',
+        borderWidth: 1,
+        borderColor: '#D8B24A',
+        borderRadius: 10,
+        padding: 14,
+        minHeight: 60,
+        textAlignVertical: 'top',
+      }}
+    />
+  </View>
+)}
 </Text>
   <Pressable
   onPress={() => setShowWhyText((current) => !current)}
@@ -911,6 +978,54 @@ setTimeout(() => {
     </Pressable>
 
     <Pressable onPress={() => setStep('goal')}>
+      <Text style={s.backText}>← Back</Text>
+    </Pressable>
+  </>
+)}
+{step === 'clarification' && (
+  <>
+    <Text style={s.h1}>One quick question</Text>
+
+    <Text style={s.copy}>
+      {clarificationQuestion ?? 'What would help us understand your goal better?'}
+    </Text>
+
+    {clarificationOptions.map((option, index) => (
+      <Pressable
+        key={index}
+        style={s.primary}
+        onPress={() => setClarificationAnswer(option)}
+      >
+        <Text style={s.primaryText}>
+          {clarificationAnswer === option ? '✓ ' : ''}
+          {option}
+        </Text>
+      </Pressable>
+    ))}
+
+    <TextInput
+      value={clarificationAnswer}
+      onChangeText={setClarificationAnswer}
+      placeholder="Or tell us in your own words..."
+      placeholderTextColor="#666"
+      style={[s.input, { minHeight: 80 }]}
+      multiline
+    />
+
+    <Pressable
+      style={s.primary}
+     onPress={() => {
+  if (!clarificationAnswer.trim()) {
+    Alert.alert('One quick answer', 'Choose an option or tell us in your own words.');
+    return;
+  }
+  setStep('deadline');
+}}
+    >
+      <Text style={s.primaryText}>CONTINUE →</Text>
+    </Pressable>
+
+    <Pressable onPress={() => setStep('why')}>
       <Text style={s.backText}>← Back</Text>
     </Pressable>
   </>

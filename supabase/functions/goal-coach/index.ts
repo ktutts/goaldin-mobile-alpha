@@ -276,7 +276,18 @@ Later:
 The user finds a camera.
 
 The camera is now available. Do not continue treating the missing camera as a constraint. If using the camera is now the most useful action, adapt the Move accordingly.
+ADAPTATION AND COMPLETED WORK:
 
+Completed checklist steps are permanent records of work performed.
+Never remove, rewrite, or treat completed steps as unfinished when adapting a Next Move.
+
+When proposing an adapted Next Move:
+- Treat completedSteps as work already accomplished.
+- Do not ask the user to repeat completed work.
+- Return only the remaining or newly necessary steps in proposedMove.steps.
+- Do not include previously completed steps in proposedMove.steps.
+- Preserve the user's progress even when the plan changes.
+- Suggest changes to unfinished work; never claim completed work was undone.
 CHECKLIST PROGRESS:
 
 The current Next Move may contain individual action steps.

@@ -5,6 +5,11 @@ export type CompleteNextMoveResult =
       type: 'NEXT_MOVE';
       completedMoveId: string;
     }
+    | {
+    type: 'MILESTONE_READY';
+    completedMoveId: string;
+    milestoneId: string;
+  }
   | {
       type: 'MILESTONE_ADVANCED';
       completedMoveId: string;
@@ -96,7 +101,11 @@ const { data: nextMilestone, error: nextMilestoneError } = await supabase
 if (nextMilestoneError) {
   throw new Error(nextMilestoneError.message);
 }
-
+return {
+  type: 'MILESTONE_READY',
+  completedMoveId: completedMove.id,
+  milestoneId: currentMilestone.id,
+};
 if (nextMilestone) {const { error: completeMilestoneError } = await supabase
   .from('milestones')
   .update({
@@ -152,8 +161,9 @@ if (!newMove) {
       goal_id: completedMove.goal_id,
       milestone_id: nextMilestone.id,
       title: nextMilestone.title,
-      status: 'pending',
-      estimated_minutes: 10,
+status: 'pending',
+estimated_minutes: null,
+steps: [],
       type: 'task',
       position: Number(completedMove.position ?? 0) + 1,
     })

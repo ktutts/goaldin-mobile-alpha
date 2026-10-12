@@ -8,6 +8,7 @@ import {
 } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { Action, Goal } from '@/types/models';
+import { confirmMilestone } from '../../lib/confirmMilestone';
 import CircularProgress from '../../components/CircularProgress';
 import GoalTimePicker from '../../components/GoalTimePicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -45,6 +46,7 @@ export default function GoalDetail() {
   const [actions, setActions] = useState<Action[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [milestones, setMilestones] = useState<any[]>([]);
   const [timerRunning, setTimerRunning] = useState(false);
   const [moveStarted, setMoveStarted] = useState(false);
@@ -61,6 +63,7 @@ const [showCoachInput, setShowCoachInput] = useState(false);
   const [showScheduleSavedModal, setShowScheduleSavedModal] = useState(false);
   const [showTimerMenu, setShowTimerMenu] = useState(false);
   const [timerMinutes, setTimerMinutes] = useState('10');
+  const [showMilestoneConfirmed, setShowMilestoneConfirmed] = useState(false);
   const [coachMessage, setCoachMessage] = useState<string | null>(null);
   const [coachThinking, setCoachThinking] = useState(false);
   const [adaptedMove, setAdaptedMove] = useState<{
@@ -197,13 +200,25 @@ if (aiResponse.suggestedCompletedSteps?.length) {
   setSuggestedCompletedSteps([]);
 }
    if (aiResponse.proposedMove) {
-  const updatedMove = {
-    ...aiResponse.proposedMove,
-    minutes: aiResponse.proposedMove.minutes ?? 10,
-  };
+  const completedSteps = Array.isArray(nextPending?.completed_steps)
+  ? nextPending.completed_steps
+  : [];
+
+const remainingSteps = aiResponse.proposedMove.steps ?? [];
+
+const updatedMove = {
+  ...aiResponse.proposedMove,
+minutes: null,
+  steps: [
+    ...completedSteps,
+    ...remainingSteps.filter(
+      (step: string) => !completedSteps.includes(step)
+    ),
+  ],
+};
 
   setAdaptedMove(updatedMove);
-  setAdaptedCompletedSteps([]);
+  setAdaptedCompletedSteps(completedSteps);
 
   if (nextPending?.id) {
     const { error: updateError } = await supabase
@@ -212,8 +227,7 @@ if (aiResponse.suggestedCompletedSteps?.length) {
         title: updatedMove.title,
         steps: updatedMove.steps ?? [],
         estimated_minutes: updatedMove.minutes,
-        completed_steps: [],
-      })
+      completed_steps: completedSteps,      })
       .eq('id', nextPending.id);
 
     if (updateError) {
@@ -554,14 +568,6 @@ const toggleNextMoveStep = async (step: string) => {
         : action
     )
   );
-  const allStepsComplete =
-  !isCompleted &&
-  displayedMoveSteps.length > 0 &&
-  updatedSteps.length === displayedMoveSteps.length;
-
-if (allStepsComplete) {
-  await completeMove(nextPending.id);
-}
 };
 
 const completeMove = async (actionId: string) => {
@@ -579,8 +585,11 @@ const completeMove = async (actionId: string) => {
   }
 
   const remainingPending = actions.filter(
-    (action) => action.id !== actionId && action.status === 'pending'
-  );
+  (action) =>
+    action.id !== actionId &&
+    action.milestone_id === nextPending?.milestone_id &&
+    action.status === 'pending'
+);
 
  
 const completedMove = actions.find((action) => action.id === actionId);
@@ -597,164 +606,19 @@ if (upcomingMove) {
   setCoachMessage(
     `Nice work. ${completedMove?.title ?? 'That move'} is complete. Next up: ${upcomingMove.title}`
   );
-} else if (goalId) {
-  const currentMilestone =
-    milestones.find((m) => m.id === completedMove?.milestone_id) ??
-    milestones.find((m) => m.status === 'active');
-
-  const nextMilestone = currentMilestone
-    ? [...milestones]
-        .filter(
-          (m) =>
-            m.position > currentMilestone.position &&
-            m.status !== 'completed'
-        )
-        .sort((a, b) => a.position - b.position)[0]
-    : undefined;
-
-  // There is another milestone: finish this stage and advance.
-  if (currentMilestone && nextMilestone) {
-    const { error: completeMilestoneError } = await supabase
-      .from('milestones')
-      .update({
-        status: 'completed',
-        completed_at: new Date().toISOString(),
-      })
-      .eq('id', currentMilestone.id);
-
-    if (completeMilestoneError) {
-      Alert.alert(
-        'Move completed',
-        'The move was completed, but the milestone could not be advanced.'
-      );
-      return;
-    }
-
-    const { error: activateMilestoneError } = await supabase
-      .from('milestones')
-      .update({ status: 'active' })
-      .eq('id', nextMilestone.id);
-
-    if (activateMilestoneError) {
-      Alert.alert(
-        'Milestone completed',
-        'The next milestone could not be activated.'
-      );
-      return;
-    }
-
-    const userId = completedMove?.user_id;
-
-    if (!userId) {
-      Alert.alert(
-        'Milestone advanced',
-        'Could not create the next move.'
-      );
-      return;
-    }
-
-    const { data: newMove, error: newMoveError } = await supabase
-      .from('actions')
-      .insert({
-        user_id: userId,
-        goal_id: goalId,
-        milestone_id: nextMilestone.id,
-        title: nextMilestone.title,
-        status: 'pending',
-        estimated_minutes: 10,
-        type: 'task',
-        position: actions.length,
-      })
-      .select()
-      .single();
-
-    if (newMoveError || !newMove) {
-      Alert.alert(
-        'Milestone advanced',
-        'The next milestone is active, but its first move could not be created.'
-      );
-      return;
-    }
-
-    setMilestones((current) =>
-      current.map((m) =>
-        m.id === currentMilestone.id
-          ? { ...m, status: 'completed' }
-          : m.id === nextMilestone.id
-            ? { ...m, status: 'active' }
-            : m
-      )
-    );
-
-   setActions((current) => [
-  ...current.map((action) =>
-    action.id === actionId
-      ? { ...action, status: 'completed' as const }
-      : action
-  ),
-  newMove as Action,
-]);
-
-    setCoachMessage(
-      `Milestone complete. Next up: ${nextMilestone.title}`
-    );
-
-    return;
-  }
-setActions((current) =>
-  current.map((action) =>
-    action.id === actionId
-      ? { ...action, status: 'completed' as const }
-      : action
-  )
-);
-  // No next milestone means the whole goal is actually finished.
-  const { error: goalError } = await supabase
-    .from('goals')
-    .update({
-      status: 'completed',
-      completed_at: new Date().toISOString(),
-    })
-    .eq('id', goalId);
-
-  if (goalError) {
-    Alert.alert(
-      'Move completed',
-      'The final milestone was completed, but the goal could not be closed.'
-    );
-    return;
-  }
-
-  if (currentMilestone) {
-    await supabase
-      .from('milestones')
-      .update({
-        status: 'completed',
-        completed_at: new Date().toISOString(),
-      })
-      .eq('id', currentMilestone.id);
-  }
-if (currentMilestone) {
-  setMilestones((current) =>
-    current.map((m) =>
-      m.id === currentMilestone.id
-        ? { ...m, status: 'completed' as const }
-        : m
+} else if (goalId) {  setActions((current) =>
+    current.map((action) =>
+      action.id === actionId
+        ? { ...action, status: 'completed' as const }
+        : action
     )
-  );
-}
-  setGoal((current) =>
-    current
-      ? {
-          ...current,
-          status: 'completed',
-        }
-      : current
   );
 
   setCoachMessage(
-    `Nice work. ${completedMove?.title ?? 'That move'} is complete. Goal complete.`
+    'Next Move complete. Review your progress and confirm this milestone when you are ready.'
   );
+
+  return;
 }
 };
   useEffect(() => {
@@ -819,7 +683,7 @@ if (currentMilestone) {
     };
 
     void load();
-  }, [goalId]);
+  }, [goalId, refreshKey]);
 useFocusEffect(
   useCallback(() => {
     if (!goalId) return;
@@ -876,7 +740,8 @@ if (milestoneError) {
   }, [timerRunning]);
 
   const nextPending = actions.find((a) => a.status === 'pending');
-const goalComplete = !nextPending;
+const goalComplete =
+  goal?.status === 'completed';
 const isPractice = goal?.is_practice === true;
  const displayedMoveTitle =
   adaptedMove?.title ?? nextPending?.title;
@@ -1472,17 +1337,19 @@ if (!Notifications) return;
     marginBottom: 10,
   }}
 >
-        <View
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: 4,
-            borderWidth: 1,
-            borderColor: '#D8B24A',
-            marginTop: 6,
-            marginRight: 10,
-          }}
-        />
+       <Text
+  style={{
+    color: '#D8B24A',
+    fontSize: 18,
+    width: 22,
+    marginRight: 8,
+  }}
+>
+  {Array.isArray(nextPending?.completed_steps) &&
+  nextPending.completed_steps.includes(step)
+    ? '✓'
+    : '○'}
+</Text>
 
         <Text
           style={{
@@ -1545,7 +1412,9 @@ unfinishedDisplayedSteps.length === 0 ? (      <Text
         ALL ACTIONS COMPLETE ✓
       </Text>
     ) : null}
-{displayedMoveSteps.length === 0 && nextPending ? (
+{nextPending &&
+  (displayedMoveSteps.length === 0 ||
+    unfinishedDisplayedSteps.length === 0) ? (
   <Pressable
     onPress={() => completeMove(nextPending.id)}
     style={{
@@ -1563,7 +1432,7 @@ unfinishedDisplayedSteps.length === 0 ? (      <Text
         textAlign: 'center',
       }}
     >
-      COMPLETE NEXT MOVE
+      CONTINUE MY PATH ✓
     </Text>
   </Pressable>
 ) : null}
@@ -2445,9 +2314,23 @@ setAdaptedMove({
     </Text>
 
     {milestones.map((milestone, index) => {
-      const isCurrent =
-  index === milestones.findIndex(
-    (m) => m.status !== 'completed'
+      const isCurrent = milestone.status === 'active';
+      const isReadyToConfirm =
+  isCurrent &&
+  actions.some(
+    (action) => action.milestone_id === milestone.id
+  ) &&
+  !actions.some(
+    (action) =>
+      action.milestone_id === milestone.id &&
+      action.status !== 'completed'
+  ) &&
+  (
+    nextPending?.milestone_id !== milestone.id ||
+    (
+      displayedMoveSteps.length > 0 &&
+      unfinishedDisplayedSteps.length === 0
+    )
   );
       const isLast = index === milestones.length - 1;
 
@@ -2471,10 +2354,31 @@ setAdaptedMove({
                 height: 18,
                 borderRadius: 9,
                 borderWidth: 2,
-                borderColor: isCurrent ? '#D8B24A' : '#6E6E73',
-                backgroundColor: isCurrent ? '#D8B24A' : 'transparent',
+                alignItems: 'center',
+justifyContent: 'center',
+                borderColor:
+  milestone.status === 'completed' || isCurrent
+    ? '#D8B24A'
+    : '#E6E7E3',
+backgroundColor:
+  milestone.status === 'completed' || isCurrent
+    ? '#D8B24A'
+    : 'transparent',
               }}
-            />
+>
+{milestone.status === 'completed' && (
+  <Text
+    style={{
+      color: '#111111',
+      fontSize: 13,
+      fontWeight: '900',
+      lineHeight: 17,
+    }}
+  >
+    ✓
+  </Text>
+)}
+</View>
 
             {!isLast ? (
               <View
@@ -2531,7 +2435,7 @@ setAdaptedMove({
                       letterSpacing: 0.8,
                     }}
                   >
-                    CURRENT
+                    {isReadyToConfirm ? 'READY TO CONFIRM' : 'CURRENT'}
                   </Text>
                 </View>
               ) : null}
@@ -2595,6 +2499,56 @@ setAdaptedMove({
     </Text>
   </Pressable>
 ) : null}
+{isReadyToConfirm ? (
+  <Pressable
+    onPress={async () => {
+      try {
+        await confirmMilestone(milestone.id);
+        setMilestones((current) => {
+  const next = current.find(
+    (m) =>
+      m.position > milestone.position &&
+      m.status !== 'completed'
+  );
+
+  return current.map((m) =>
+    m.id === milestone.id
+      ? { ...m, status: 'completed' as const }
+      : m.id === next?.id
+      ? { ...m, status: 'active' as const }
+      : m
+  );
+});
+        setRefreshKey((current) => current + 1);
+      setShowMilestoneConfirmed(true);
+        
+      } catch (error: any) {
+        Alert.alert(
+          'Could not confirm milestone',
+          error?.message ?? 'Please try again.'
+        );
+      }
+    }}
+    style={{
+      marginTop: 12,
+      paddingVertical: 14,
+      paddingHorizontal: 18,
+      borderRadius: 12,
+      backgroundColor: '#D8B24A',
+      alignItems: 'center',
+    }}
+  >
+    <Text
+      style={{
+        color: '#000000',
+        fontSize: 14,
+        fontWeight: '900',
+      }}
+    >
+      CONFIRM MILESTONE ✓
+    </Text>
+  </Pressable>
+) : null}
           </View>
         </View>
       );
@@ -2602,7 +2556,77 @@ setAdaptedMove({
   </View>
 ) : null}
       </ScrollView>
+      <Modal
+  visible={showMilestoneConfirmed}
+  transparent
+  animationType="fade"
+  onRequestClose={() => setShowMilestoneConfirmed(false)}
+>
+  <View
+    style={{
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.75)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 24,
+    }}
+  >
+    <View
+      style={{
+        width: '100%',
+        backgroundColor: '#111111',
+        borderWidth: 1,
+        borderColor: '#D4AF37',
+        borderRadius: 16,
+        padding: 28,
+        alignItems: 'center',
+      }}
+    >
+      <Text style={{ color: '#D4AF37', fontSize: 34, marginBottom: 12 }}>
+        ✓
+      </Text>
 
+      <Text
+        style={{
+          color: '#D4AF37',
+          fontSize: 20,
+          fontWeight: '900',
+          textAlign: 'center',
+          marginBottom: 12,
+        }}
+      >
+        MILESTONE COMPLETE
+      </Text>
+
+      <Text
+        style={{
+          color: '#FFFFFF',
+          fontSize: 15,
+          textAlign: 'center',
+          marginBottom: 24,
+        }}
+      >
+        Progress recorded. Your Path continues.
+      </Text>
+
+      <Pressable
+        onPress={() => setShowMilestoneConfirmed(false)}
+        style={{
+          backgroundColor: '#D4AF37',
+          borderRadius: 10,
+          paddingVertical: 15,
+          paddingHorizontal: 24,
+          width: '100%',
+          alignItems: 'center',
+        }}
+      >
+        <Text style={{ color: '#111111', fontWeight: '900' }}>
+          CONTINUE MY PATH
+        </Text>
+      </Pressable>
+    </View>
+  </View>
+</Modal>
       <Modal visible={showScheduleSavedModal} transparent animationType="fade" onRequestClose={() => setShowScheduleSavedModal(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
           <View style={{ width: '86%', backgroundColor: '#111111', borderRadius: 12, borderWidth: 1, borderColor: '#D8B24A', padding: 18 }}>
