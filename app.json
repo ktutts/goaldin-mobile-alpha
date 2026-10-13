@@ -15,6 +15,9 @@
     "android": {
       "package": "com.mygoaldin.app",
       "versionCode": 2,
+      "permissions": [
+  "android.permission.SCHEDULE_EXACT_ALARM"
+],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/goaldin-crown.png",
         "backgroundColor": "#090909"

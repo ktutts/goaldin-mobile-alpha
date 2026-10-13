@@ -81,9 +81,11 @@ const suggestTimer =
       if (left === 0) {
         setEndAt(null);
         setTimerDone(true);
-        Vibration.vibrate(400);
-        timerAlarm.seekTo(0);
-timerAlarm.play();
+        if (Date.now() - endAt < 2000) {
+  Vibration.vibrate(400);
+  timerAlarm.seekTo(0);
+  timerAlarm.play();
+}
         void clearTimerState().catch((error) => {
   console.error('Could not clear completed timer:', error);
 });
