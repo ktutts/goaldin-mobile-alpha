@@ -115,8 +115,7 @@ if (nextMilestone) {const { error: completeMilestoneError } = await supabase
   .eq('id', currentMilestone.id);
 
 if (completeMilestoneError) {
-  throw new Error(completeMilestoneError.message);
-}
+throw new Error(completeMilestoneError?.message ?? 'Could not complete milestone');}
 const { error: clearActiveMilestonesError } = await supabase
   .from('milestones')
   .update({
@@ -127,7 +126,7 @@ const { error: clearActiveMilestonesError } = await supabase
   .neq('id', nextMilestone.id);
 
 if (clearActiveMilestonesError) {
-  throw new Error(clearActiveMilestonesError.message);
+throw new Error(clearActiveMilestonesError?.message ?? 'Could not clear active milestones');
 }
 const { error: activateMilestoneError } = await supabase
   .from('milestones')
@@ -137,7 +136,7 @@ const { error: activateMilestoneError } = await supabase
   .eq('id', nextMilestone.id);
 
 if (activateMilestoneError) {
-  throw new Error(activateMilestoneError.message);
+throw new Error(activateMilestoneError?.message ?? 'Could not activate milestone');
 }
 let { data: newMove, error: newMoveError } = await supabase
   .from('actions')
@@ -150,7 +149,7 @@ let { data: newMove, error: newMoveError } = await supabase
   .maybeSingle();
 
 if (newMoveError) {
-  throw new Error(newMoveError.message);
+throw new Error(newMoveError?.message ?? 'Could not create next move');
 }
 
 if (!newMove) {
@@ -195,7 +194,8 @@ const { error: finalMilestoneError } = await supabase
   .eq('id', currentMilestone.id);
 
 if (finalMilestoneError) {
-  throw new Error(finalMilestoneError.message);
+  throw new Error(finalMilestoneError?.message ?? 'Could not complete final milestone');
+
 }
 
 const { error: goalError } = await supabase
@@ -207,7 +207,7 @@ const { error: goalError } = await supabase
   .eq('id', completedMove.goal_id);
 
 if (goalError) {
-  throw new Error(goalError.message);
+  throw new Error(goalError?.message ?? 'Could not complete goal');
 }
 
 return {

@@ -24,7 +24,9 @@
       "expo-router",
       "expo-font",
       "@react-native-community/datetimepicker",
-      "expo-speech-recognition"
+      "expo-speech-recognition",
+      "expo-audio",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true

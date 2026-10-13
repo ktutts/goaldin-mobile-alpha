@@ -208,7 +208,7 @@ const remainingSteps = aiResponse.proposedMove.steps ?? [];
 
 const updatedMove = {
   ...aiResponse.proposedMove,
-minutes: null,
+minutes: 0,
   steps: [
     ...completedSteps,
     ...remainingSteps.filter(
@@ -218,7 +218,7 @@ minutes: null,
 };
 
   setAdaptedMove(updatedMove);
-  setAdaptedCompletedSteps(completedSteps);
+
 
   if (nextPending?.id) {
     const { error: updateError } = await supabase
@@ -237,53 +237,7 @@ minutes: null,
     }
   }
 }
-if (
-  aiResponse.completedSteps?.length &&
-  nextPending?.id &&
-  displayedMoveSteps.length
-) {
-  const existingCompleted = Array.isArray(nextPending.completed_steps)
-    ? nextPending.completed_steps
-    : [];
 
-  const validCompleted = aiResponse.completedSteps.filter(
-    (step) =>
-      displayedMoveSteps.includes(step) &&
-      !existingCompleted.includes(step)
-  );
-
-  const updatedCompleted = [
-    ...new Set([...existingCompleted, ...validCompleted]),
-  ];
-
-  if (validCompleted.length > 0) {
-    const { error: checklistError } = await supabase
-      .from('actions')
-      .update({
-        completed_steps: updatedCompleted,
-      })
-      .eq('id', nextPending.id);
-
-    if (checklistError) {
-      console.error('Could not update checklist:', checklistError);
-    } else {
-      setActions((current) =>
-        current.map((action) =>
-          action.id === nextPending.id
-            ? { ...action, completed_steps: updatedCompleted }
-            : action
-        )
-      );
-      const allStepsComplete =
-  displayedMoveSteps.length > 0 &&
-  updatedCompleted.length === displayedMoveSteps.length;
-
-if (allStepsComplete) {
-  await completeMove(nextPending.id);
-}
-    }
-  }
-}
     setCoachMessage(aiResponse.message);
     // Clean up Course Correction after a successful coach response
     setCoachInput('');
@@ -1285,7 +1239,13 @@ if (!Notifications) return;
           {nextPending ? (
             <>
             <Text style={s.nextMoveTitle}>{displayedMoveTitle}</Text>
-              <Text style={s.nextMoveMeta}>{displayedMoveMinutes ? `${displayedMoveMinutes} MIN` : 'READY WHEN YOU ARE'}</Text>
+<Text style={s.nextMoveMeta}>
+  {displayedMoveMinutes
+    ? `ABOUT ${displayedMoveMinutes} MIN`
+    : displayedMoveSteps.length > 0
+    ? `${displayedMoveSteps.length} STEP${displayedMoveSteps.length === 1 ? '' : 'S'}`
+    : 'READY WHEN YOU ARE'}
+</Text>
 {displayedMoveSteps.length > 0 ? (
   <View style={{ marginTop: 14 }}>
     <View

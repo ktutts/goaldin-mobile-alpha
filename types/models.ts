@@ -11,7 +11,7 @@ export type Goal = {
 why?: string | null;
 target?: string | null;
 deadline?: string | null;
-
+is_practice?: boolean | null;
 horizon?: GoalHorizon | null;
 planning_mode?: PlanningMode | null;
 };
