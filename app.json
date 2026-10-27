@@ -14,10 +14,13 @@
     },
     "android": {
       "package": "com.mygoaldin.app",
-      "versionCode": 2,
+      "versionCode": 3,
       "permissions": [
-  "android.permission.SCHEDULE_EXACT_ALARM"
-],
+        "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.health.READ_SLEEP",
+        "android.permission.health.READ_RESTING_HEART_RATE",
+        "android.permission.health.READ_HEART_RATE_VARIABILITY"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/goaldin-crown.png",
         "backgroundColor": "#090909"
@@ -29,7 +32,35 @@
       "@react-native-community/datetimepicker",
       "expo-speech-recognition",
       "expo-audio",
-      "expo-asset"
+      "expo-asset",
+      "react-native-ble-plx",
+      "react-native-health-connect",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 36,
+            "targetSdkVersion": 36,
+            "minSdkVersion": 26
+          }
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow GOAL'D IN to capture photos you choose for your progress and YOU page.",
+          "photosPermission": "Allow GOAL'D IN to select a photo for your YOU page or private progress records.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "@kingstinct/react-native-healthkit",
+        {
+          "NSHealthShareUsageDescription": "GOAL'D IN reads sleep, resting heart rate and heart-rate variability only when you choose, to provide personal activity context. We do not upload these readings or share them with other users.",
+          "NSHealthUpdateUsageDescription": false,
+          "background": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
