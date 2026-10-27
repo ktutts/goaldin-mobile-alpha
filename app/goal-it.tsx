@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -20,9 +20,55 @@ import {
   buildMilestoneDrafts,
   classifyGoal,
 } from '@/lib/goalPlanner';
-import { getAIPlan } from '@/lib/aiPlanner';
+import { getAIPlan, getWhySuggestions } from '@/lib/aiPlanner';
 import { getSuggestedSchedule } from '@/lib/suggestedSchedule';
 type ActionDraft = [string, number];
+type GoalTimingKind = 'undecided' | 'finish-line' | 'ongoing';
+type RunningExperience = 'unsure' | 'starting' | 'some' | 'regular';
+
+// Time-only pickers start at a predictable, editable 12:00 AM rather than
+// the current hour/minute. Previously saved times are never changed.
+function defaultTimePickerDate(): Date {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function suggestGoalTiming(title: string): 'finish-line' | 'ongoing' | null {
+  const text = title.toLowerCase();
+  if (/\b(every|daily|weekly|monthly|habit|routine|consistently)\b/.test(text)) return 'ongoing';
+  if (/\b(5\s?k|10\s?k|half marathon|marathon|race|finish|complete|launch|graduate|certification|exam|deadline)\b/.test(text)) return 'finish-line';
+  return null;
+}
+
+function isRunningTrainingGoal(title: string): boolean {
+  const text = title.toLowerCase();
+  if (/\b(5\s?k|10\s?k|half marathon|marathon|running|runner|jogging|jog)\b/.test(text)) return true;
+  // "Run a business" is not a running-training goal.
+  return /\brun\b(?!\s+(?:a\s+|my\s+|the\s+)?(?:business|company|store|shop|restaurant|website|app|organization|campaign|project)\b)/.test(text);
+}
+
+function localDateISO(date: Date): string {
+  return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
+}
+
+function describeSchedule(
+  type: 'once' | 'repeat' | null,
+  days: { day: number; times: string[] }[],
+  typedSchedule: string
+): string | null {
+  if (type === 'repeat' && days.length > 0) {
+    const chosen = days
+      .map(({ day, times }) => `${WEEKDAYS[day - 1] ?? 'Unknown day'}${times.length ? ` at ${times.join(', ')}` : ' (time not set)'}`)
+      .join('; ');
+    return `Repeating on ${chosen}`;
+  }
+  if (type === 'once' && typedSchedule.trim()) return `One-time action: ${typedSchedule.trim()}`;
+  if (typedSchedule.trim()) return `User-entered timing: ${typedSchedule.trim()}`;
+  return null;
+}
 
 function draftActions(title: string): ActionDraft[] {
   const t = title.toLowerCase();
@@ -162,9 +208,10 @@ export default function GoalIt() {
   // why
   const [why, setWhy] = useState('');
   const [whyReasons, setWhyReasons] = useState<string[]>([]);
+  const [whySuggestions, setWhySuggestions] = useState<string[]>([]);
+  const [whySuggestionsLoading, setWhySuggestionsLoading] = useState(false);
+  // Keep barriers available for the separate, optional planning experience.
   const [whyBarriers, setWhyBarriers] = useState<string[]>([]);
-  const [whyFollowUp, setWhyFollowUp] = useState('');
-  const [showWhyText, setShowWhyText] = useState(false);
 
   // clarification
   const [clarificationQuestion, setClarificationQuestion] = useState<string | null>(null);
@@ -183,11 +230,20 @@ export default function GoalIt() {
   const [scheduleDays, setScheduleDays] = useState<{ day: number; times: string[] }[]>([]);
   const [activeScheduleDay, setActiveScheduleDay] = useState<number | null>(null);
   const [oneTimeDate, setOneTimeDate] = useState<Date | null>(null);
-  const [pendingTime, setPendingTime] = useState<Date>(new Date());
+  const [pendingTime, setPendingTime] = useState<Date>(defaultTimePickerDate);
   const [showCustomPicker, setShowCustomPicker] = useState(false);
+
+  // WHEN: a finish line is distinct from the days reserved for taking action.
+  const [goalTimingKind, setGoalTimingKind] = useState<GoalTimingKind>('undecided');
+  const [goalTargetDate, setGoalTargetDate] = useState<Date | null>(null);
+  const [showGoalTargetPicker, setShowGoalTargetPicker] = useState(false);
+  const [eventName, setEventName] = useState('');
+  const [runningExperience, setRunningExperience] = useState<RunningExperience>('unsure');
+  const [wantsBeginnerPlan, setWantsBeginnerPlan] = useState(false);
 
   // speech
   const [speechTarget, setSpeechTarget] = useState<'title' | 'why'>('title');
+  const whySpeechBaseRef = useRef('');
 
   useEffect(() => {
     if (buildFromGoal) setTitle(buildFromGoal);
@@ -196,8 +252,12 @@ export default function GoalIt() {
   useSpeechRecognitionEvent('result', (event) => {
     const spokenText = event.results[0]?.transcript;
     if (!spokenText) return;
-    if (speechTarget === 'why') setWhy(spokenText);
-    else setTitle(spokenText);
+    if (speechTarget === 'why') {
+      const existing = whySpeechBaseRef.current;
+      setWhy(existing ? `${existing} ${spokenText}` : spokenText);
+    } else {
+      setTitle(spokenText);
+    }
   });
 
   const startListening = async () => {
@@ -213,19 +273,17 @@ export default function GoalIt() {
     });
   };
 
-  const whyFollowUpQuestion = whyReasons.includes('I want to feel better')
-    ? 'What would feeling better allow you to do?'
-    : whyReasons.includes('I need this handled')
-    ? 'What would tell you this is taken care of?'
-    : whyReasons.includes('It will make life easier')
-    ? 'What would become easier in your everyday life?'
-    : whyReasons.includes('I want to prove I can do it')
-    ? 'What would achieving this mean to you?'
-    : whyReasons.includes('Someone else is counting on me')
-    ? 'Who benefits from this, and what matters most to them?'
-    : whyReasons.includes('This opens the door to something bigger')
-    ? 'What possibility are you hoping this creates?'
-    : '';
+  const whyFollowUpQuestion =
+    whyReasons.length === 0
+      ? ''
+      : whyReasons.length > 1
+        ? 'You chose a few reasons. Which one matters most to you right now?'
+        : 'What makes that reason important to you?';
+
+  const hasWhy = why.trim().length > 0 || whyReasons.length > 0;
+  const timingHint = suggestGoalTiming(title);
+  const runningGoal = isRunningTrainingGoal(title);
+  const showTargetDate = goalTimingKind === 'finish-line' || (goalTimingKind === 'undecided' && timingHint === 'finish-line');
 
   function toggleScheduleDay(day: number) {
     setScheduleDays((current) => {
@@ -271,7 +329,6 @@ export default function GoalIt() {
       whyReasons.length ? `Why this matters: ${whyReasons.join('; ')}` : '',
       whyBarriers.length ? `Possible barriers: ${whyBarriers.join('; ')}` : '',
       why.trim() ? `User note: ${why.trim()}` : '',
-      whyFollowUp.trim() ? `Follow-up insight (${whyFollowUpQuestion}): ${whyFollowUp.trim()}` : '',
       clarificationRef.answer.trim()
         ? `Additional clarification (${clarificationRef.question ?? 'Goal details'}): ${clarificationRef.answer.trim()}`
         : '',
@@ -284,13 +341,40 @@ export default function GoalIt() {
       return;
     }
 
+    // Dates are finish lines. Repeating days are the user's availability, not a finish date.
+    const targetDate = showTargetDate && goalTargetDate
+      ? localDateISO(goalTargetDate)
+      : null;
+    const scheduleSummary = describeSchedule(scheduleType, scheduleDays, deadline);
+    const whenContext = [
+      'WHEN CONTEXT — user choices (do not treat suggestions as facts):',
+      `Goal type: ${goalTimingKind === 'undecided' ? 'Not confirmed; infer from the goal' : goalTimingKind}`,
+      `Target finish/event date: ${targetDate ?? 'Not selected'}`,
+      `Chosen work schedule: ${scheduleSummary ?? 'Not selected'}`,
+      `Named event: ${showTargetDate ? eventName.trim() || 'None provided' : 'None provided'}`,
+      ...(runningGoal ? [
+        `Running experience: ${runningExperience === 'unsure' ? 'Not provided' : runningExperience}`,
+        `Interested in a gradual beginner plan: ${wantsBeginnerPlan ? 'Yes' : 'Not specified'}`,
+      ] : []),
+      'Planning rules: Respect any days the user already chose. Never ask them to choose those days again.',
+      'Do not assume they can add training days. Offer realistic adjustments as options, especially if preparing for a race.',
+      'A repeating activity schedule is not a target completion date. Do not invent event listings or dates.',
+      'For ongoing practices emphasize consistency, not a false 100% completion. If crucial details are missing, ask at most one useful question.',
+    ].join('\n');
+
     setSaving(true);
 
+    // The WHEN context travels with the existing WHY field until every backend
+    // entry point is confirmed to forward the separately provided schedule.
+    // The original user's WHY remains separately available in cleanWhy.
+    const planningContext = [cleanWhy, whenContext].filter(Boolean).join('\n\n');
+    const planDeadline = targetDate;
     const aiPlan = await getAIPlan({
       title: cleanTitle,
       outcome: cleanOutcome || null,
-      why: cleanWhy || null,
-      deadline: deadline || null,
+      why: planningContext || null,
+      deadline: planDeadline,
+      schedule: scheduleSummary,
     });
 
     if (!clarificationRef.question && aiPlan?.needsClarification && aiPlan.clarificationQuestion) {
@@ -305,15 +389,15 @@ export default function GoalIt() {
 
     const classification = aiPlan
       ? { horizon: aiPlan.horizon, planningMode: aiPlan.planningMode }
-      : classifyGoal({ title: `${cleanTitle} ${cleanOutcome}`, deadline: deadline || null });
+      : classifyGoal({ title: `${cleanTitle} ${cleanOutcome}`, deadline: planDeadline });
 
     const milestoneDrafts = aiPlan?.milestones?.length
       ? aiPlan.milestones
       : buildMilestoneDrafts({
           title: cleanTitle,
           outcome: cleanOutcome,
-          why: cleanWhy,
-          deadline: deadline || null,
+          why: planningContext,
+          deadline: planDeadline,
           horizon: classification.horizon,
           planningMode: classification.planningMode,
         });
@@ -336,7 +420,7 @@ export default function GoalIt() {
         status: 'active',
         parent_goal_id: parentGoalId ?? null,
         // ongoing practices are flagged so Today and the Coach treat them as practices
-        is_practice: isContinuingPractice,
+        is_practice: isContinuingPractice || goalTimingKind === 'ongoing',
       })
       .select()
       .single();
@@ -408,7 +492,22 @@ export default function GoalIt() {
       user_id: user.id,
       event_type: 'goal_created',
       object_id: goal.id,
-      metadata: { title: cleanTitle },
+      // Keep the chosen timing context on the existing goal-created event.
+      // The Coach still needs a read path to use it on future visits.
+      metadata: {
+        title: cleanTitle,
+        when_context: {
+          version: 1,
+          goal_type_choice: goalTimingKind,
+          target_date: targetDate,
+          schedule_type: scheduleType,
+          schedule_days: scheduleType === 'repeat' ? scheduleDays : [],
+          typed_schedule: scheduleType !== 'repeat' ? deadline.trim() || null : null,
+          event_name: showTargetDate ? eventName.trim() || null : null,
+          running_experience: runningGoal ? runningExperience : null,
+          wants_beginner_plan: runningGoal ? wantsBeginnerPlan : null,
+        },
+      },
     });
 
     // Schedule the reminders chosen while creating this goal.
@@ -449,6 +548,14 @@ export default function GoalIt() {
     setOutcome('');
     setDeadline('');
     setWhy('');
+    setGoalTimingKind('undecided');
+    setGoalTargetDate(null);
+    setEventName('');
+    setRunningExperience('unsure');
+    setWantsBeginnerPlan(false);
+    setScheduleType(null);
+    setScheduleDays([]);
+    setOneTimeDate(null);
     setStep('goal');
     setShowSuccess(true);
 
@@ -546,6 +653,19 @@ export default function GoalIt() {
                   return;
                 }
                 setStep('why');
+                setWhySuggestions([]);
+setWhySuggestionsLoading(true);
+
+void getWhySuggestions(title.trim())
+  .then((suggestions) => {
+    setWhySuggestions(suggestions);
+  })
+  .catch((error) => {
+    console.error('Could not load WHY suggestions:', error);
+  })
+  .finally(() => {
+    setWhySuggestionsLoading(false);
+  });
               }}
             >
               <Text style={s.primaryText}>CONTINUE →</Text>
@@ -556,107 +676,102 @@ export default function GoalIt() {
         {/* ================= WHY ================= */}
         {step === 'why' && (
           <>
-            <Text style={s.h1}>What would you like to be different?</Text>
-
+            <Text style={s.h1}>Why does this matter to you?</Text>
             <Text style={s.copy}>
-              You don't need the perfect answer. Tell us what matters right now. We'll help you explore why.
+              How will achieving this goal make a difference in your life?
             </Text>
 
-            <Text style={s.pickLabel}>PICK WHAT FITS</Text>
-
-            <View style={s.wrap}>
-              {[
-                'I want to feel better',
-                'I need this handled',
-                'It will make life easier',
-                'I want to prove I can do it',
-                'Someone else is counting on me',
-                'This opens the door to something bigger',
-              ].map((reason) => {
-                const selected = whyReasons.includes(reason);
-                return (
-                  <Pressable
-                    key={reason}
-                    onPress={() =>
-                      setWhyReasons((current) =>
-                        current.includes(reason) ? current.filter((item) => item !== reason) : [...current, reason]
-                      )
-                    }
-                    style={s.reasonChip}
-                  >
-                    <Text style={[s.reasonText, selected && { color: '#111' }]}>{reason}</Text>
-                  </Pressable>
-                );
-              })}
+            <Text style={s.sectionLabel}>MY OWN WORDS</Text>
+            <View style={s.whyInputWrap}>
+              <TextInput
+                value={why}
+                onChangeText={setWhy}
+                placeholder={whyFollowUpQuestion || `Imagine making progress on "${title.trim()}". What's different in your life?`}
+                placeholderTextColor="#888888"
+                style={s.whyInput}
+                multiline
+                accessibilityLabel="Tell your coach why this goal matters"
+              />
+              <Pressable
+                onPress={() => {
+                  whySpeechBaseRef.current = why.trim();
+                  setSpeechTarget('why');
+                  void startListening();
+                }}
+                style={s.whyMic}
+                accessibilityRole="button"
+                accessibilityLabel="Speak your why"
+              >
+                <Text style={s.whyMicText}>🎙 SPEAK</Text>
+              </Pressable>
             </View>
 
-            <Text style={s.sectionLabel}>MY OWN WORDS</Text>
-
-            {whyFollowUpQuestion !== '' && (
-              <View style={{ marginTop: 24, marginBottom: 12 }}>
-                <Text style={s.followUpQuestion}>{whyFollowUpQuestion}</Text>
-                <TextInput
-                  value={whyFollowUp}
-                  onChangeText={setWhyFollowUp}
-                  placeholder="Your answer (optional)"
-                  placeholderTextColor="#888888"
-                  multiline
-                  style={s.goldInput}
-                />
+            <Text style={s.pickLabel}>NEED A STARTING POINT?</Text>
+            {whySuggestionsLoading ? (
+              <Text style={s.whyHelpText}>Your coach is finding ideas for your goal...</Text>
+            ) : whySuggestions.length === 0 ? (
+              <Text style={s.whyHelpText}>
+                No suggestions right now. Your own words are enough.
+              </Text>
+            ) : (
+              <View style={s.wrap}>
+                {whySuggestions.map((reason) => {
+                  const selected = whyReasons.includes(reason);
+                  return (
+                    <Pressable
+                      key={reason}
+                      onPress={() =>
+                        setWhyReasons((current) =>
+                          current.includes(reason)
+                            ? current.filter((item) => item !== reason)
+                            : [...current, reason]
+                        )
+                      }
+                      style={[s.reasonChip, selected && s.reasonChipSelected]}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                    >
+                      <Text style={[s.reasonText, selected && s.reasonTextSelected]}>
+                        {selected ? '✓ ' : ''}{reason}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
               </View>
             )}
 
-            <Pressable onPress={() => setShowWhyText((current) => !current)} style={{ paddingVertical: 14 }}>
-              <Text style={s.link}>{showWhyText ? '− HIDE MY OWN WORDS' : '+ ADD SOMETHING IN MY OWN WORDS'}</Text>
-            </Pressable>
-
-            {showWhyText && (
-              <>
-                <TextInput
-                  value={why}
-                  onChangeText={setWhy}
-                  placeholder="Anything else GOAL'D IN should know?"
-                  placeholderTextColor="#666"
-                  style={[s.input, { minHeight: 90 }]}
-                  multiline
-                />
-                <Pressable
-                  onPress={() => {
-                    setSpeechTarget('why');
-                    void startListening();
-                  }}
-                  style={{ marginTop: 10, alignSelf: 'flex-start' }}
-                >
-                  <Text style={s.link}>🎙 SPEAK MY WORDS</Text>
-                </Pressable>
-              </>
+            {whyFollowUpQuestion !== '' && (
+              <View style={s.whyCoachNote}>
+                <Text style={s.whyCoachLabel}>YOUR COACH · OPTIONAL</Text>
+                <Text style={s.whyCoachQuestion}>{whyFollowUpQuestion}</Text>
+                <Text style={s.whyCoachHint}>You can answer in your own words above, or keep going.</Text>
+              </View>
             )}
 
-            <Text style={s.sectionLabel}>WHAT COULD GET IN THE WAY?</Text>
+            <Text style={s.whyReassurance}>
+              You don't need the perfect answer. Your WHY can help your coach
+              support you on difficult days.
+            </Text>
 
-            <View style={s.wrap}>
-              {['Time', 'Money', 'Tools or parts', 'Not sure how', 'Motivation', 'Other people', 'Not sure yet'].map(
-                (barrier) => {
-                  const selected = whyBarriers.includes(barrier);
-                  return (
-                    <Pressable
-                      key={barrier}
-                      onPress={() =>
-                        setWhyBarriers((current) =>
-                          current.includes(barrier) ? current.filter((item) => item !== barrier) : [...current, barrier]
-                        )
-                      }
-                      style={s.barrierChip}
-                    >
-                      <Text style={[s.barrierText, selected && { color: '#111' }]}>{barrier}</Text>
-                    </Pressable>
-                  );
-                }
-              )}
-            </View>
+            <Pressable
+              style={[s.primary, !hasWhy && s.whyDisabled]}
+              disabled={!hasWhy}
+              onPress={() => setStep('deadline')}
+              accessibilityRole="button"
+            >
+              <Text style={s.primaryText}>CONTINUE WITH MY WHY →</Text>
+            </Pressable>
 
-            <Pressable style={s.primary} onPress={() => setStep('deadline')}>
-              <Text style={s.primaryText}>CONTINUE →</Text>
+            <Pressable
+              onPress={() => {
+                setWhy('');
+                setWhyReasons([]);
+                setWhyBarriers([]);
+                setStep('deadline');
+              }}
+              accessibilityRole="button"
+            >
+              <Text style={s.whySkipText}>Not sure yet? Skip for now</Text>
             </Pressable>
 
             <Pressable onPress={() => setStep('goal')}>
@@ -710,7 +825,7 @@ export default function GoalIt() {
                   return;
                 }
                 clarificationRef.answer = clarificationAnswer;
-                setStep('deadline');
+                void create();
               }}
             >
               <Text style={s.primaryText}>CONTINUE →</Text>
@@ -722,11 +837,92 @@ export default function GoalIt() {
           </>
         )}
 
-        {/* ================= DEADLINE ================= */}
+        {/* ================= WHEN ================= */}
         {step === 'deadline' && (
           <>
-            <Text style={s.copy}>Set timeline.</Text>
+            <Text style={s.h1}>When will this happen?</Text>
+            <Text style={s.copy}>A finish line and the time you set aside to work on it are two different things. Let's make both useful.</Text>
 
+            <View style={s.whenPanel}>
+              <Text style={s.whenLabel}>WHAT KIND OF GOAL IS THIS?</Text>
+              <View style={s.rowGap}>
+                <Pressable
+                  onPress={() => setGoalTimingKind('finish-line')}
+                  style={[s.half, goalTimingKind === 'finish-line' && s.halfOn]}
+                  accessibilityRole="button"
+                >
+                  <Text style={[s.halfText, goalTimingKind === 'finish-line' && { color: '#0B0B0B' }]}>FINISH LINE</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setGoalTimingKind('ongoing')}
+                  style={[s.half, goalTimingKind === 'ongoing' && s.halfOn]}
+                  accessibilityRole="button"
+                >
+                  <Text style={[s.halfText, goalTimingKind === 'ongoing' && { color: '#0B0B0B' }]}>ONGOING</Text>
+                </Pressable>
+              </View>
+              <Pressable onPress={() => setGoalTimingKind('undecided')} accessibilityRole="button">
+                <Text style={s.whenMuted}>Not sure yet — let my coach help me decide</Text>
+              </Pressable>
+              {goalTimingKind === 'undecided' && timingHint && (
+                <Text style={s.whenMuted}>
+                  This looks like {timingHint === 'ongoing' ? 'an ongoing practice' : 'a goal that could benefit from a finish date'}. You can choose differently.
+                </Text>
+              )}
+              {showTargetDate && (
+                <View style={{ marginTop: 14 }}>
+                  <Text style={s.whenLabel}>TARGET COMPLETION / EVENT DATE · OPTIONAL</Text>
+                  <Pressable onPress={() => setShowGoalTargetPicker(true)} style={s.pickButton}>
+                    <Text style={s.pickButtonText}>
+                      {goalTargetDate ? goalTargetDate.toLocaleDateString() : '+ CHOOSE A TARGET DATE'}
+                    </Text>
+                  </Pressable>
+                  {goalTargetDate && (
+                    <Pressable onPress={() => setGoalTargetDate(null)}>
+                      <Text style={s.whenMuted}>Clear target date</Text>
+                    </Pressable>
+                  )}
+                  <TextInput
+                    value={eventName}
+                    onChangeText={setEventName}
+                    placeholder="Working toward a specific event? (optional)"
+                    placeholderTextColor="#888888"
+                    style={[s.input, { marginTop: 10, minHeight: 56, height: 56, paddingVertical: 12, fontSize: 16 }]}
+                  />
+                  <Text style={s.whenMuted}>We won't guess an event or registration deadline. Verified local suggestions can be added later.</Text>
+                </View>
+              )}
+            </View>
+
+            {runningGoal && (
+              <View style={s.whenPanel}>
+                <Text style={s.whenLabel}>ONE USEFUL QUESTION FROM YOUR COACH · OPTIONAL</Text>
+                <Text style={s.whenPrompt}>How comfortable are you with running right now?</Text>
+                {([
+                  ['starting', 'Just starting / prefer run-walk'],
+                  ['some', 'I can run a little'],
+                  ['regular', 'I run regularly'],
+                  ['unsure', 'Not sure / skip'],
+                ] as const).map(([value, label]) => (
+                  <Pressable
+                    key={value}
+                    onPress={() => setRunningExperience(value)}
+                    style={[s.whenOption, runningExperience === value && s.whenOptionOn]}
+                  >
+                    <Text style={s.whenOptionText}>{runningExperience === value ? '✓  ' : ''}{label}</Text>
+                  </Pressable>
+                ))}
+                <Pressable onPress={() => setWantsBeginnerPlan((current) => !current)} style={s.whenOption}>
+                  <Text style={s.whenOptionText}>{wantsBeginnerPlan ? '✓  ' : ''}Help me build a gradual run/walk (Couch to 5K-style) plan</Text>
+                </Pressable>
+                {scheduleType === 'repeat' && scheduleDays.length === 1 && (
+                  <Text style={s.whenMuted}>Your chosen day is a starting point. Your coach can suggest additional sessions, but won't add days without asking.</Text>
+                )}
+              </View>
+            )}
+
+            <Text style={s.whenLabel}>WHEN CAN YOU WORK ON IT?</Text>
+            <Text style={s.whenMuted}>Choose a one-time action or a repeating routine. This is separate from your finish date.</Text>
             <Pressable onPress={() => setShowScheduleBuilder((current) => !current)} style={s.primary}>
               <Text style={s.primaryText}>MAKE A SCHEDULE</Text>
             </Pressable>
@@ -804,7 +1000,7 @@ export default function GoalIt() {
                               <Pressable
                                 onPress={() => {
                                   setActiveScheduleDay(item.day);
-                                  setPendingTime(new Date());
+                                  setPendingTime(defaultTimePickerDate());
                                   setShowCustomPicker(true);
                                 }}
                                 style={[s.pickButton, { marginTop: 8 }]}
@@ -864,6 +1060,16 @@ export default function GoalIt() {
         )}
 
         <GoalTimePicker
+          show={showGoalTargetPicker}
+          initialDate={goalTargetDate ?? defaultTimePickerDate()}
+          onCancel={() => setShowGoalTargetPicker(false)}
+          onAdd={(date) => {
+            setGoalTargetDate(date);
+            setShowGoalTargetPicker(false);
+          }}
+        />
+
+        <GoalTimePicker
           show={showCustomPicker}
           showDate={false}
           initialDate={pendingTime}
@@ -883,7 +1089,7 @@ export default function GoalIt() {
 
         <GoalTimePicker
           show={showTimePicker}
-          initialDate={oneTimeDate ?? new Date()}
+          initialDate={oneTimeDate ?? defaultTimePickerDate()}
           onCancel={() => setShowTimePicker(false)}
           onAdd={(date) => {
             setOneTimeDate(date);
@@ -972,7 +1178,21 @@ const s = StyleSheet.create({
   pickLabel: { color: '#D8B24A', marginTop: 18, marginBottom: 10, fontWeight: '800' },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   reasonChip: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 16, borderWidth: 1, borderColor: '#D8B24A', backgroundColor: 'transparent' },
+  reasonChipSelected: { backgroundColor: '#D8B24A' },
   reasonText: { color: '#D8B24A', fontWeight: '800', fontSize: 14 },
+  reasonTextSelected: { color: '#111111' },
+  whyCoachNote: { backgroundColor: '#181715', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#514427', marginTop: 2, marginBottom: 2 },
+  whyCoachLabel: { color: '#D8B24A', fontWeight: '800', fontSize: 12, marginBottom: 8 },
+  whyCoachQuestion: { color: '#E5E5E5', fontSize: 16, lineHeight: 23 },
+  whyCoachHint: { color: '#A9A9A9', fontSize: 13, marginTop: 8 },
+  whyInputWrap: { minHeight: 154, borderColor: '#D8B24A', borderWidth: 1, borderRadius: 16, backgroundColor: '#121214' },
+  whyInput: { color: '#FFFFFF', fontSize: 17, padding: 16, paddingBottom: 55, minHeight: 150, textAlignVertical: 'top' },
+  whyMic: { position: 'absolute', right: 12, bottom: 10, paddingVertical: 9, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#282316' },
+  whyMicText: { color: '#E3BC5D', fontSize: 13, fontWeight: '800' },
+  whyHelpText: { color: '#A9A9A9', fontSize: 14, lineHeight: 21, marginBottom: 12 },
+  whyReassurance: { color: '#A9A9A9', fontSize: 13, lineHeight: 20, marginTop: 24 },
+  whyDisabled: { opacity: 0.42 },
+  whySkipText: { color: '#A9A9A9', textAlign: 'center', marginTop: 18, fontSize: 14 },
   sectionLabel: { color: '#D8B24A', fontWeight: '900', fontSize: 16, marginTop: 28, marginBottom: 14 },
   followUpQuestion: { color: '#D8B24A', fontSize: 16, fontWeight: '700', marginBottom: 10 },
   goldInput: {
@@ -988,6 +1208,13 @@ const s = StyleSheet.create({
   barrierChip: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18, borderWidth: 1, borderColor: '#D8B24A', backgroundColor: 'transparent' },
   barrierText: { color: '#D8B24A', fontWeight: '800', fontSize: 14 },
   builder: { marginTop: 14, padding: 16, borderWidth: 1, borderColor: '#3A3426', borderRadius: 16, backgroundColor: '#111111' },
+  whenPanel: { marginTop: 18, padding: 16, borderWidth: 1, borderColor: '#3A3426', borderRadius: 16, backgroundColor: '#111111' },
+  whenLabel: { color: '#D8B24A', fontSize: 13, fontWeight: '900', marginBottom: 12, letterSpacing: 0.5 },
+  whenPrompt: { color: '#EAEAEA', fontSize: 16, lineHeight: 23, marginBottom: 12, fontWeight: '700' },
+  whenMuted: { color: '#A9A9A9', fontSize: 13, lineHeight: 19, marginTop: 10, marginBottom: 8 },
+  whenOption: { borderWidth: 1, borderColor: '#4A4232', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, marginTop: 8 },
+  whenOptionOn: { borderColor: '#D8B24A', backgroundColor: '#272217' },
+  whenOptionText: { color: '#E3D5AE', fontSize: 14, lineHeight: 19 },
   rowGap: { flexDirection: 'row', gap: 10, marginBottom: 18 },
   half: { flex: 1, paddingVertical: 14, borderRadius: 14, borderWidth: 1, borderColor: '#D8B24A', backgroundColor: '#111111', alignItems: 'center' },
   halfOn: { backgroundColor: '#D8B24A' },

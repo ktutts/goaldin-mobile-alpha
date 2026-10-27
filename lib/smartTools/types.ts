@@ -4,6 +4,7 @@ export type SmartToolType =
   | 'reminder'
   | 'activity_tracking'
   | 'equipment'
+  | 'guidance'
   | 'progress_record';
 
 export type ActivityMetric =
@@ -14,7 +15,10 @@ export type ActivityMetric =
   | 'repetitions'
   | 'calories'
   | 'notes';
-
+export type TimerStage = {
+  label: string;
+  seconds: number;
+};
 export type ToolSuggestion = {
   id: string;
   type: SmartToolType;
@@ -22,6 +26,7 @@ export type ToolSuggestion = {
   reason: string;
   sourceStepIndex?: number;
   suggestedSeconds?: number;
+  timerStages?: TimerStage[];
   editable: boolean;
 };
 

@@ -45,9 +45,23 @@ export function stopActivitySession(
     return session;
   }
 
-  return {
-    ...session,
-    status: 'completed',
-    endedAt,
-  };
+  const durationSeconds = session.startedAt
+  ? Math.max(
+      0,
+      Math.floor(
+        (new Date(endedAt).getTime() -
+          new Date(session.startedAt).getTime()) / 1000
+      )
+    )
+  : 0;
+
+return {
+  ...session,
+  status: 'completed',
+  endedAt,
+  metrics: {
+    ...session.metrics,
+    duration_seconds: durationSeconds,
+  },
+};
 }

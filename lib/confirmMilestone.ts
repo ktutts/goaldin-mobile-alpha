@@ -42,10 +42,21 @@ const { data: nextMilestone, error: nextError } = await supabase
 if (nextError) {
   throw new Error(nextError.message);
 }
+ if (milestone.confirmed_at || milestone.status !== 'active') {
+   throw new Error('This milestone was already confirmed or is no longer active.');
+ }
+ // Validate the next milestone before changing this one; don't strand the user.
+ if (nextMilestone) {
+   const { data: plannedMove, error: moveError } = await supabase
+     .from('actions').select('id,title').eq('milestone_id', nextMilestone.id)
+     .eq('status', 'pending').order('position', { ascending: true })
+     .limit(1).maybeSingle();
+   if (moveError) throw new Error(moveError.message);
+   if (!plannedMove?.title?.trim()) {
+     throw new Error('The next milestone needs a Next Move before this one can be confirmed.');
+   }
+ }
  const confirmedAt = new Date().toISOString();
-if (milestone.confirmed_at) {
-  throw new Error('This milestone is already confirmed.');
-}
 const { data: confirmedMilestone, error: confirmError } =
   await supabase
     .from('milestones')
@@ -57,8 +68,10 @@ const { data: confirmedMilestone, error: confirmError } =
         milestone.first_confirmed_at ?? confirmedAt,
     })
     .eq('id', milestoneId)
+    .eq('status', 'active')
+    .is('confirmed_at', null)
     .select('*')
-    .single();
+    .maybeSingle();
 
 if (confirmError || !confirmedMilestone) {
   throw new Error(
@@ -68,24 +81,6 @@ if (confirmError || !confirmedMilestone) {
 
 
 if (nextMilestone) {
-    const { data: plannedMove, error: moveError } = await supabase
-  .from('actions')
-  .select('id, title, steps')
-  .eq('milestone_id', nextMilestone.id)
-  .eq('status', 'pending')
-  .order('position', { ascending: true })
-  .limit(1)
-  .maybeSingle();
-
-if (moveError) {
-  throw new Error(moveError.message);
-}
-
-if (!plannedMove || !plannedMove.title?.trim()) {
-  throw new Error(
-    'Your next milestone needs a Next Move. Open its workspace to set one.'
-  );
-}
 const { error: clearError } = await supabase
   .from('milestones')
   .update({ status: 'pending' })
@@ -96,13 +91,14 @@ const { error: clearError } = await supabase
 if (clearError) {
   throw new Error(clearError.message);
 }
-  const { error: activateError } = await supabase
+  const { data: activated, error: activateError } = await supabase
     .from('milestones')
     .update({ status: 'active' })
-    .eq('id', nextMilestone.id);
+    .eq('id', nextMilestone.id)
+    .select('id').maybeSingle();
 
-  if (activateError) {
-    throw new Error(activateError.message);
+  if (activateError || !activated) {
+    throw new Error(activateError?.message ?? 'The next milestone could not be activated.');
   }
 }
 return confirmedMilestone;

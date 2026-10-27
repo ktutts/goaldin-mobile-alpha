@@ -1,5 +1,6 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import type { TimerStage } from './types';
 
 const TIMER_CHANNEL = 'goaldin-timers';
 
@@ -44,6 +45,7 @@ console.log('Scheduling timer notification:', seconds);
       title: 'GOAL’D IN — Timer Finished',
       body: 'Your timer is up. Record your progress and get after your next move.',
       sound: 'default',
+      data: { goaldinTimer: true },
     },
     trigger: {
       type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
@@ -57,13 +59,55 @@ export async function cancelTimerNotifications(): Promise<void> {
     await Notifications.getAllScheduledNotificationsAsync();
 
   const timerNotifications = scheduled.filter(
-    (notification) =>
-      notification.content.title === 'GOAL’D IN – Timer Finished'
-  );
-
+  (notification) =>
+    notification.content.data?.goaldinTimer === true ||
+    notification.content.title?.includes('Timer Finished')
+);
   for (const notification of timerNotifications) {
     await Notifications.cancelScheduledNotificationAsync(
       notification.identifier
     );
+  }
+}
+export async function scheduleGuidedTimerNotifications(
+  stages: TimerStage[],
+  firstStageEndAt: number
+): Promise<void> {
+  if (!stages.length) return;
+
+  const ready = await prepareTimerNotifications();
+  if (!ready) return;
+
+  let stageEndAt = firstStageEndAt;
+
+  for (let i = 0; i < stages.length; i++) {
+    if (i > 0) {
+      stageEndAt += stages[i].seconds * 1000;
+    }
+
+    if (stageEndAt <= Date.now()) continue;
+
+    const nextStage = stages[i + 1];
+
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: nextStage
+          ? "GOAL'D IN — Next Stage"
+          : "GOAL'D IN — Activity Complete",
+        body: nextStage
+          ? `Up next: ${nextStage.label}`
+          : 'Your guided activity is complete.',
+        sound: 'default',
+        data: { goaldinTimer: true },
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+        seconds: Math.max(
+          1,
+          Math.ceil((stageEndAt - Date.now()) / 1000)
+        ),
+        channelId: TIMER_CHANNEL,
+      },
+    });
   }
 }

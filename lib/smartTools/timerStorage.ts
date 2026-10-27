@@ -1,6 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { ActivitySession } from './types';
-
+import type { ActivitySession, TimerStage } from './types';
 const TIMER_STORAGE_KEY = 'goaldin-active-timer';
 let storageQueue: Promise<void> = Promise.resolve();
 
@@ -17,6 +16,8 @@ function queueStorageWrite(
 export type SavedTimer = {
   endAt: number;
   session: ActivitySession;
+  guidedTimerStages?: TimerStage[];
+  guidedStageIndex?: number;
 };
 
 export async function saveTimerState(
