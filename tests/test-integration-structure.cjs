@@ -1,0 +1,26 @@
+// Static regression smoke tests. Real-device and project-level typechecks remain necessary.
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const base=path.join(__dirname,'..');
+const read=(f)=>fs.readFileSync(path.join(base,f),'utf8');
+const workspace=read('app/goal/milestone/[milestoneId].tsx');
+const root=read('app/_layout.tsx');
+const today=read('app/today.tsx');
+const hook=read('lib/goalReminderNavigation.ts');
+const program=workspace.slice(workspace.indexOf('async function approveProgram()'),workspace.indexOf('  useEffect(() => {\n    if (!endAt)'));
+assert.match(program,/\.from\('milestones'\)[\s\S]*\.insert\(rows\)/);
+assert.match(program,/status: 'pending'/);
+assert.match(program,/milestone_id: stageIds\.get/);
+assert.doesNotMatch(program,/milestone_id: milestone\.id,/);
+assert.match(workspace,/<PreparedWorkoutPanel/);
+assert.match(workspace,/onStartGuidedTimer=\{\(stages\) => startGuidedTimer\(stages\)\}/);
+assert.match(workspace,/recordingActiveRef\.current = true/);
+assert.match(workspace,/if \(recordingActiveRef\.current\)/);
+assert.match(workspace,/withHeartRateMetrics\(stopActivitySession\(current\)\)/);
+assert.match(root,/useGoalReminderNavigation\(\{navigationReady/);
+assert.doesNotMatch(root,/addNotificationResponseReceivedListener/);
+assert.doesNotMatch(today,/useGoalReminderNavigation\(/);
+assert.match(hook,/getLastNotificationResponseAsync\(\)/);
+assert.match(hook,/openNextMove: '1'/);
+console.log('PASS: distinct future milestones, explicit Start, guarded HR recording, one root reminder handler');
