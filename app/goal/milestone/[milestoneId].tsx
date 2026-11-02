@@ -4,6 +4,8 @@ import React, { useEffect, useRef, useState } from 'react';import {
   Alert,
   Linking,
   Pressable,
+  Platform,
+  StatusBar,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -33,6 +35,9 @@ import {
   cancelTimerNotifications,
 } from '../../../lib/smartTools/timerNotifications';
 import { useAudioPlayer } from 'expo-audio';
+import * as Speech from 'expo-speech';
+import RhythmTool from '../../../components/RhythmTool';
+import InstrumentTuner from '../../../components/InstrumentTuner';
 import { BleManager } from 'react-native-ble-plx';
 import {
   startActivitySession,
@@ -109,6 +114,8 @@ const [hasScannedBle, setHasScannedBle] = useState(false);
   const moveText = String(nextMove?.title ?? '').toLowerCase();
   
   const [progressEntries, setProgressEntries] = useState<any[]>([]);
+  const [showAllProgress, setShowAllProgress] = useState(false);
+  const [showProgressForm, setShowProgressForm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -144,9 +151,32 @@ const [hasScannedBle, setHasScannedBle] = useState(false);
   const [guidedTimerStages, setGuidedTimerStages] = useState<TimerStage[]>([]);
 const [guidedStageIndex, setGuidedStageIndex] = useState(0);
 const handledTimerEndRef = useRef<number | null>(null);
+  const [timerVoice, setTimerVoice] = useState(true);
+  const lastSpokenSecondRef = useRef<string>('');
+  const voiceModeRef = useRef(timerVoice);
+  voiceModeRef.current = timerVoice;
+  const speakCue = (message: string) => {
+    if (!voiceModeRef.current || AppState.currentState !== 'active') return;
+    try { Speech.speak(message, { language: 'en-US', rate: 1.08 }); }
+    catch (error) { console.warn('Timer voice unavailable:', error); }
+  };
+  useEffect(() => {
+    void AsyncStorage.getItem('goaldin-timer-voice-v1').then((value) => {
+      if (value === 'off') setTimerVoice(false);
+    }).catch(() => {});
+    return () => { Speech.stop(); };
+  }, []);
+  const toggleTimerVoice = () => setTimerVoice((current) => {
+    const next = !current;
+    void AsyncStorage.setItem('goaldin-timer-voice-v1', next ? 'on' : 'off').catch(() => {});
+    if (!next) void Speech.stop();
+    return next;
+  });
   // Proactive Smart Tools guidance
 const [showGuidance, setShowGuidance] = useState(false);
 const [showExtraTools, setShowExtraTools] = useState(false);
+const [showManualRhythm, setShowManualRhythm] = useState(false);
+const [showInstrumentTuner, setShowInstrumentTuner] = useState(false);
 const [showProgramSchedule, setShowProgramSchedule] = useState(false);
 const [guidanceAnswer, setGuidanceAnswer] = useState('');
 const [guidanceResponse, setGuidanceResponse] = useState('');
@@ -589,6 +619,7 @@ if (recoveredIndex !== (saved.guidedStageIndex ?? 0)) {
 
       setProgressEntries((current) => [data, ...current]);
       setProgressText('');
+      setShowProgressForm(false);
       setLastRecordedProgress({ id: data.id, entry_type: progressType, content });
       setProgressCoachMessage(null);
       setReviewedMove(null);
@@ -1075,13 +1106,13 @@ const handleFindBluetoothTools = async () => {
           <Text style={s.backText}>← YOUR PATH</Text>
         </Pressable>
 
-        <Text style={s.kicker}>MILESTONE WORKSPACE</Text>
+        <Text style={s.kicker}>YOUR PATH  /  MILESTONE</Text>
         <Text style={s.title}>{milestone.title}</Text>
         {milestone.description ? <Text style={s.desc}>{milestone.description}</Text> : null}
 
         <View style={s.divider} />
 
-        <Text style={s.label}>CURRENT NEXT MOVE</Text>
+        <Text style={s.label}>CURRENT MOVE</Text>
 
         {nextMove ? (
           <View style={s.card}>
@@ -1092,7 +1123,7 @@ const handleFindBluetoothTools = async () => {
             {steps.length > 0 ? (
               <View style={{ marginTop: 16, marginBottom: 4 }}>
                 <View style={s.progressHead}>
-                  <Text style={s.progressLabel}>MOVE PROGRESS</Text>
+                  <Text style={s.progressLabel}>CURRENT MOVE CHECKLIST</Text>
                   <Text style={s.progressCount}>
                     {completedStepCount}/{steps.length} · {moveProgress}%
                   </Text>
@@ -1135,8 +1166,19 @@ const handleFindBluetoothTools = async () => {
 
         {/* tools */}
         <View style={{ marginTop: 20, marginBottom: 12 }}>
-          <Text style={s.toolsTitle}>YOUR NEXT MOVE TOOLS</Text>
-          <Text style={{ color: '#AAAAAA', fontSize: 12, marginBottom: 12, lineHeight: 18 }}>Use what helps you take action. Everything else can stay out of the way.</Text>
+          <Text style={s.toolsTitle}>GET READY · TOOLS FOR THIS MOVE</Text>
+          <Text style={{ color: '#AAAAAA', fontSize: 12, marginBottom: 12, lineHeight: 18 }}>Tools are optional. Choose what helps you do this Move.</Text>
+          {/\b(guitar|chord|piano|music|instrument|drum|violin|bass|metronome|rhythm|beat|tempo|cadence|dance|drumming|singing|boxing|jump rope)\b/i.test(`${milestone.title} ${nextMove?.title ?? ''} ${steps.join(' ')}`) && <RhythmTool />}
+          {!/\b(guitar|chord|piano|music|instrument|drum|violin|bass|metronome|rhythm|beat|tempo|cadence|dance|drumming|singing|boxing|jump rope)\b/i.test(`${milestone.title} ${nextMove?.title ?? ''} ${steps.join(' ')}`) && (
+            <Pressable onPress={() => setShowManualRhythm((v) => !v)} style={{ paddingVertical: 9, paddingHorizontal: 12, alignSelf: 'flex-start' }}>
+              <Text style={{ color: '#D8B24A', fontSize: 12, fontWeight: '800' }}>{showManualRhythm ? 'HIDE RHYTHM TOOL ↑' : '+ RHYTHM TOOL (OPTIONAL)'}</Text>
+            </Pressable>
+          )}
+          {showManualRhythm && !/\b(guitar|chord|piano|music|instrument|drum|violin|bass|metronome|rhythm|beat|tempo|cadence|dance|drumming|singing|boxing|jump rope)\b/i.test(`${milestone.title} ${nextMove?.title ?? ''} ${steps.join(' ')}`) && <RhythmTool />}
+          <Pressable onPress={() => setShowInstrumentTuner((v) => !v)} style={{ paddingVertical: 9, paddingHorizontal: 12, alignSelf: 'flex-start' }}>
+            <Text style={{ color: '#D8B24A', fontSize: 12, fontWeight: '800' }}>{showInstrumentTuner ? 'HIDE INSTRUMENT TUNER ↑' : '+ INSTRUMENT TUNER (OPTIONAL)'}</Text>
+          </Pressable>
+          {showInstrumentTuner && <InstrumentTuner />}
           <Pressable onPress={() => setShowExtraTools((v) => !v)} style={{ marginBottom: 12, paddingVertical: 9, paddingHorizontal: 12, alignSelf: 'flex-start' }}>
             <Text style={{ color: '#D8B24A', fontWeight: '800', fontSize: 12 }}>{showExtraTools ? 'HIDE CONNECTED TOOLS ↑' : '+ CONNECTED TOOLS (OPTIONAL)'}</Text>
           </Pressable>
@@ -1405,8 +1447,25 @@ if (stages && stages.length > 1) {
           )}
         </View>
 
+       {nextMove && nextMove.estimated_minutes > 0 && endAt === null && secondsLeft === 0 && !timerDone && (
+         <Pressable
+           onPress={() => {
+             const duration = Number(nextMove.estimated_minutes);
+             if (Number.isFinite(duration) && duration > 0) startTimer(Math.round(duration * 60));
+           }}
+           style={s.primaryAction}
+           accessibilityRole="button"
+         >
+           <Text style={s.primaryActionText}>▶ {/(guitar|chord|piano|music|instrument|drum|sing|practice)/i.test(`${milestone.title} ${nextMove.title}`) ? 'START PRACTICE' : /\b(run|jog|walk)\b/i.test(nextMove.title) ? 'START ACTIVITY' : 'START MOVE TIMER'}</Text>
+           <Text style={s.primaryActionSub}>{nextMove.estimated_minutes} MIN · Timer and activity recording start together</Text>
+         </Pressable>
+       )}
+
        {(endAt !== null || timerDone || secondsLeft > 0) && (
           <View style={s.timerCard}>
+            <Pressable accessibilityRole="button" accessibilityLabel={timerVoice ? 'Turn timer voice off' : 'Turn timer voice on'} onPress={toggleTimerVoice} style={{ alignSelf: 'flex-end', padding: 8 }}>
+              <Text style={{ color: G, fontWeight: '800', fontSize: 12 }}>VOICE {timerVoice ? 'ON' : 'OFF'}</Text>
+            </Pressable>
             {timerDone ? (
               <Text style={s.timerDone}>Time's up.</Text>
             ) : (
@@ -1439,11 +1498,17 @@ if (stages && stages.length > 1) {
           </View>
         )}
 
+
         {/* record progress */}
         <View style={s.recordCard}>
-          <Text style={s.recordTitle}>RECORD PROGRESS</Text>
-          <Text style={s.recordHelp}>What happened? What did you learn or discover?</Text>
-
+          <Pressable onPress={() => setShowProgressForm((open) => !open)} accessibilityRole="button" style={s.recordHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.recordTitle}>✦ RECORD PROGRESS</Text>
+              <Text style={s.recordHelp}>Tell Coach what happened. Every step forward counts.</Text>
+            </View>
+            <Text style={s.recordChevron}>{showProgressForm ? '−' : '+'}</Text>
+          </Pressable>
+          {showProgressForm && <>
           <View style={s.chips}>
             {PROGRESS_TYPES.map((type) => {
               const selected = progressType === type;
@@ -1462,7 +1527,7 @@ if (stages && stages.length > 1) {
           <TextInput
             value={progressText}
             onChangeText={setProgressText}
-            placeholder="Record a result, observation, decision, or lesson..."
+            placeholder="What happened? What worked, or what got in the way?"
             placeholderTextColor="#666666"
             multiline
             style={s.recordInput}
@@ -1470,9 +1535,10 @@ if (stages && stages.length > 1) {
 
           <Pressable onPress={() => void recordProgress()} disabled={!canRecord} style={[s.recordBtn, canRecord && { backgroundColor: G }]}>
             <Text style={[s.recordBtnText, canRecord && { color: '#0B0B0B' }]}>
-              {savingProgress ? 'SAVING...' : 'RECORD PROGRESS'}
+              {savingProgress ? 'SAVING...' : 'SAVE PROGRESS ✓'}
             </Text>
           </Pressable>
+          </>}
         </View>
 
         {lastRecordedProgress ? (
@@ -1562,8 +1628,8 @@ if (stages && stages.length > 1) {
 
         {progressEntries.length > 0 ? (
           <View style={{ marginTop: 24 }}>
-            <Text style={s.recordedLabel}>RECORDED</Text>
-            {progressEntries.map((entry, index) => (
+            <Text style={s.recordedLabel}>RECENT PROGRESS · YOUR STORY</Text>
+            {(showAllProgress ? progressEntries : progressEntries.slice(0, 2)).map((entry, index) => (
               <View key={entry.id} style={s.entry}>
                 <Text style={s.entryType}>{(entry.entry_type ?? 'note').toUpperCase()}</Text>
                 <Text style={s.entryContent}>{entry.content}</Text>
@@ -1586,30 +1652,36 @@ if (stages && stages.length > 1) {
                 ) : null}
               </View>
             ))}
+            {progressEntries.length > 2 ? (
+              <Pressable onPress={() => setShowAllProgress((value) => !value)} style={{ paddingVertical: 12, alignItems: 'center' }}>
+                <Text style={s.progressCoachActionText}>{showAllProgress ? 'SHOW LESS ↑' : `SEE ALL ${progressEntries.length} ENTRIES →`}</Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
+
       </ScrollView>
     </SafeAreaView>
   );
 }
 
 const s = StyleSheet.create({
-  page: { flex: 1, backgroundColor: '#0B0B0B' },
+  page: { flex: 1, backgroundColor: '#0B0B0B', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : 0 },
   center: { justifyContent: 'center', alignItems: 'center' },
-  scroll: { padding: 18, paddingBottom: 40 },
+  scroll: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 72 },
   loadingText: { color: '#8E8E93', marginTop: 12 },
   backPlain: { color: G, fontWeight: '900' },
   errTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: '900', marginTop: 30 },
   errText: { color: '#8E8E93', marginTop: 10 },
-  back: { marginTop: 24, marginBottom: 22, paddingVertical: 12, paddingHorizontal: 8, alignSelf: 'flex-start' },
+  back: { marginTop: 4, marginBottom: 20, paddingVertical: 12, paddingHorizontal: 8, alignSelf: 'flex-start' },
   backText: { color: G, fontWeight: '900' },
   kicker: { color: G, fontSize: 12, fontWeight: '900', letterSpacing: 1.6 },
   title: { color: '#FFFFFF', fontSize: 25, fontWeight: '900', lineHeight: 31, marginTop: 10 },
   desc: { color: '#A5A5AA', fontSize: 15, lineHeight: 22, marginTop: 12 },
   divider: { height: 1, backgroundColor: '#302B20', marginVertical: 24 },
   label: { color: G, fontSize: 12, fontWeight: '900', letterSpacing: 1.4, marginBottom: 10 },
-  card: { backgroundColor: '#111111', borderWidth: 1, borderColor: '#3A321F', borderRadius: 16, padding: 16 },
-  moveTitle: { color: '#FFFFFF', fontSize: 18, fontWeight: '900', lineHeight: 24 },
+  card: { backgroundColor: '#171510', borderWidth: 1.5, borderColor: '#B48A2C', borderRadius: 20, padding: 19 },
+  moveTitle: { color: '#FFFFFF', fontSize: 21, fontWeight: '900', lineHeight: 28 },
   minutes: { color: G, fontSize: 12, fontWeight: '800', marginTop: 7 },
   emptyText: { color: '#FFFFFF', fontWeight: '800' },
   progressHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 7 },
@@ -1714,20 +1786,28 @@ timerToggleText: {
   timerClock: { color: G, fontSize: 32, fontWeight: '900' },
   timerDone: { color: G, fontSize: 24, fontWeight: '900' },
   timerPause: { color: '#8E8E93', fontSize: 11, fontWeight: '900', letterSpacing: 1.2 },
-  progressCoachCard: { marginTop: 12, borderWidth: 1, borderColor: '#49402A', borderRadius: 14, padding: 14, backgroundColor: '#141310' },
+  progressCoachCard: { marginTop: 12, borderWidth: 1.5, borderColor: '#B48A2C', borderRadius: 18, padding: 17, backgroundColor: '#1B180F' },
    progressCoachKicker: { color: G, fontSize: 12, fontWeight: '900', letterSpacing: 0.8 },
    progressCoachText: { color: '#C9C9C9', fontSize: 14, lineHeight: 21, marginTop: 7 },
    progressCoachAction: { alignSelf: 'flex-start', paddingVertical: 12, paddingRight: 12, marginTop: 3 },
    progressCoachActionText: { color: G, fontSize: 12, fontWeight: '900', letterSpacing: 0.6 },
    progressCoachHint: { color: '#8E8E93', fontSize: 12, lineHeight: 17, marginTop: 8 },
-   recordCard: { marginTop: 22, borderWidth: 1, borderColor: '#3A321F', borderRadius: 16, padding: 16, backgroundColor: '#111111' },
-  recordTitle: { color: G, fontSize: 12, fontWeight: '900', letterSpacing: 1.3 },
-  recordHelp: { color: '#8E8E93', fontSize: 13, lineHeight: 19, marginTop: 7 },
+   musicToolNote: { marginBottom: 12, padding: 14, backgroundColor: '#171510', borderWidth: 1, borderColor: '#5B4B2F', borderRadius: 12 },
+  musicToolNoteTitle: { color: G, fontSize: 13, fontWeight: '900', letterSpacing: 1, marginBottom: 5 },
+  musicToolNoteBody: { color: '#C7C3B8', fontSize: 12, lineHeight: 18 },
+  recordCard: { marginTop: 6, borderWidth: 1.5, borderColor: '#B48A2C', borderRadius: 20, padding: 18, backgroundColor: '#181610' },
+  recordHeader: { flexDirection: 'row', alignItems: 'center', minHeight: 48 },
+  recordChevron: { color: G, fontSize: 28, fontWeight: '700', marginLeft: 14 },
+  primaryAction: { marginTop: 8, marginBottom: 18, backgroundColor: G, borderRadius: 18, paddingVertical: 17, paddingHorizontal: 12, alignItems: 'center' },
+  primaryActionText: { color: '#0B0B0B', fontSize: 17, fontWeight: '900', letterSpacing: 0.7 },
+  primaryActionSub: { color: '#171208', fontSize: 12, fontWeight: '800', marginTop: 7, textAlign: 'center' },
+  recordTitle: { color: G, fontSize: 17, fontWeight: '900', letterSpacing: 1.1 },
+  recordHelp: { color: '#C7C3B8', fontSize: 13, lineHeight: 20, marginTop: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 },
   chip: { paddingHorizontal: 11, paddingVertical: 7, borderRadius: 999, borderWidth: 1, borderColor: '#3A3426', backgroundColor: '#111111' },
   chipText: { color: '#A5A5AA', fontSize: 11, fontWeight: '900', letterSpacing: 0.7 },
   recordInput: { marginTop: 14, minHeight: 100, borderWidth: 1, borderColor: '#3A3426', borderRadius: 12, padding: 12, color: '#FFFFFF', fontSize: 15, lineHeight: 21, textAlignVertical: 'top' },
-  recordBtn: { marginTop: 12, backgroundColor: '#393939', paddingVertical: 13, borderRadius: 12, alignItems: 'center' },
+  recordBtn: { marginTop: 14, backgroundColor: '#393939', paddingVertical: 16, borderRadius: 14, alignItems: 'center' },
   recordBtnText: { color: '#777777', fontWeight: '900', letterSpacing: 1 },
   recordedLabel: { color: '#8E8E93', fontSize: 12, fontWeight: '900', letterSpacing: 1.3, marginBottom: 10 },
   entry: { borderLeftWidth: 2, borderLeftColor: G, paddingLeft: 12, marginBottom: 18 },

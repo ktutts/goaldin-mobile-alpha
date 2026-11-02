@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { ScrollView, Share, StyleSheet, Text, Pressable, View } from 'react-native';
+import { Image, ScrollView, Share, StyleSheet, Text, Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { Goal, Win } from '@/types/models';
 
 export default function Wins() {
   const [wins, setWins] = useState<Win[]>([]);
+  const [photoLinks, setPhotoLinks] = useState<Record<string, string>>({});
 const [archivedGoals, setArchivedGoals] = useState<Goal[]>([]);
   useEffect(() => {
     (async () => {
@@ -18,6 +19,13 @@ const [archivedGoals, setArchivedGoals] = useState<Goal[]>([]);
           .order('created_at', { ascending: false });
 
         setWins((data || []) as Win[]);
+        const links: Record<string, string> = {};
+        await Promise.all((data || []).map(async (win: any) => {
+          if (!win.photo_url || typeof win.photo_url !== 'string') return;
+          const signed = await supabase.storage.from('win-photos').createSignedUrl(win.photo_url, 3600);
+          if (signed.data?.signedUrl) links[win.id] = signed.data.signedUrl;
+        }));
+        setPhotoLinks(links);
         const { data: archivedData } = await supabase
   .from('goals')
   .select('*')
@@ -31,15 +39,22 @@ setArchivedGoals((archivedData || []) as Goal[]);
   }, []);
 
   return (
-    <ScrollView style={s.page} contentContainerStyle={s.scroll}>
-      <Text style={s.brand}>WINS</Text>
+    <View style={s.page}>
+      <View style={s.topBar}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Return to YOU" onPress={() => router.replace('/you')} hitSlop={12} style={s.topBack}>
+          <Text style={s.topBackText}>←  YOU</Text>
+        </Pressable>
+        <Text style={s.brand}>WINS</Text>
+      </View>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={s.scroll}>
       <Text style={s.h1}>Evidence.</Text>
-      <Text style={s.copy}>The things you said you would do — and did.</Text>
+      <Text style={s.copy}>Things you learned, tried, experienced, and accomplished.</Text>
 
       {wins.map((w) => (
         <View style={s.card} key={w.id}>
           <Text style={s.done}>GOAL'D IN ✓</Text>
           <Text style={s.title}>{w.title}</Text>
+          {!!photoLinks[w.id] && <Image source={{ uri: photoLinks[w.id] }} style={{ width: '100%', height: 190, borderRadius: 12, marginBottom: 12 }} resizeMode="cover" />}
           <Pressable
             onPress={() =>
               Share.share({
@@ -53,12 +68,9 @@ setArchivedGoals((archivedData || []) as Goal[]);
       ))}
 
       {wins.length === 0 && (
-        <Text style={s.empty}>Finish a goal and your first Win will show up here.</Text>
+        <Text style={s.empty}>Try something, learn something, or finish a goal to record your first Win.</Text>
       )}
 
-      <Pressable onPress={() => router.back()}>
-        <Text style={s.back}>← Back</Text>
-      </Pressable>
       {archivedGoals.length > 0 && (
   <View style={{ marginTop: 32 }}>
     <Text
@@ -134,7 +146,8 @@ setArchivedGoals((archivedData || []) as Goal[]);
     ))}
   </View>
 )}
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
@@ -144,9 +157,13 @@ const s = StyleSheet.create({
     backgroundColor: '#0B0B0D',
   },
   scroll: {
-    padding: 22,
-    paddingTop: 60,
+    paddingHorizontal: 22,
+    paddingTop: 18,
+    paddingBottom: 80,
   },
+  topBar: { paddingHorizontal: 22, paddingTop: 48, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  topBack: { paddingVertical: 12, paddingRight: 20 },
+  topBackText: { color: '#F0D06A', fontWeight: '900', letterSpacing: 1.3, fontSize: 13 },
   brand: {
     color: '#F0D06A',
     fontWeight: '900',

@@ -3,9 +3,9 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, Text
 import { router, useLocalSearchParams } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import {
-  DietStyle, Ingredient, Meal, STYLE_LABEL, SupportPlan,
+  DietStyle, DietaryRule, DietGuide, DIET_GUIDES, Ingredient, Meal, STYLE_LABEL, RULE_LABEL, RULE_NOTE, SupportPlan, availableRecipeCount, ingredientMatchesRules, mealMatchesRules, dietaryPrepNotes,
   buildPlan, dateKey, dayLabel, dayOfPlan, evaluatePlan, fmt12, mealCalories, mealCost,
-  mealsForDay, normalizePlan, optimizeBudget, shoppingList, stepTime, toMin, uid,
+  mealsForDay, normalizePlan, affordableMealOptions, mealSwapOptions, replacePlannedMeal, replaceShoppingIngredient, MealSwapMode, shoppingList, stepTime, toMin, uid,
 } from '@/lib/smartPlan';
 
 const G = '#D8B24A', BG = '#080808', C = '#151515', T = '#F4F1E8', M = '#9C9A92';
@@ -25,6 +25,11 @@ export default function NutritionPlanV2() {
   const [status, setStatus] = useState<SaveState>('idle');
   const [now, setNow] = useState(new Date());
   const [newTask, setNewTask] = useState('');
+  const [dietOpen, setDietOpen] = useState(false);
+  const [swapMealId, setSwapMealId] = useState<string | null>(null);
+  const [swapMode, setSwapMode] = useState<MealSwapMode>('different');
+  const [shopSwapKey, setShopSwapKey] = useState<string | null>(null);
+  const [undoPlan, setUndoPlan] = useState<SupportPlan | null>(null);
 
   const planRef = useRef(plan);
   const planIdRef = useRef<string | null>(null);
@@ -81,8 +86,6 @@ export default function NutritionPlanV2() {
     savingRef.current = true;
     dirtyRef.current = false;
     setStatus('saving');
-    const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), 10000);
     try {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError) throw userError;
@@ -106,7 +109,6 @@ export default function NutritionPlanV2() {
       dirtyRef.current = true; // keep the changes; user can retry
       setStatus('error');
     } finally {
-      clearTimeout(timeout);
       savingRef.current = false;
       if (pendingRef.current) {
         pendingRef.current = false;
@@ -155,6 +157,7 @@ const viewCals = viewMeals.reduce(
 );
   const current = plan.meals.find((m) => m.id === openId) || null;
   const list = shoppingList(plan);
+  const affordable = affordableMealOptions(plan).slice(0, 5);
   const categories = [...new Set(list.map((i) => i.cat))];
   const prefs = plan.preferences;
 
@@ -169,6 +172,9 @@ const viewCals = viewMeals.reduce(
       return { ...p, log: { ...p.log, [todayKey]: today } };
     });
 
+  const toggleOnHand = (key: string) =>
+    edit((p) => ({ ...p, onHand: { ...(p.onHand || {}), [key]: !p.onHand?.[key] } }));
+
   const toggleBought = (key: string) =>
     edit((p) => ({ ...p, bought: { ...p.bought, [key]: !p.bought[key] } }));
 
@@ -182,6 +188,30 @@ const viewCals = viewMeals.reduce(
         m.id === mealId ? { ...m, ingredients: m.ingredients.map((i) => (i.id === ingId ? { ...i, ...patch } : i)) } : m
       ),
     }));
+
+  function applyMealSwap(id: string, replacement: Meal) {
+    if (!mealMatchesRules(replacement, planRef.current.preferences.rules)) { Alert.alert('Not compatible', 'This meal conflicts with your dietary requirements.'); return; }
+    const previous = planRef.current;
+    setUndoPlan(previous);
+    edit(p => replacePlannedMeal(p, id, replacement));
+    setSwapMealId(null);
+    setOpenId(null);
+  }
+
+  function applyIngredientSwap(name: string, alternative: { name: string; price: number }) {
+    if (!ingredientMatchesRules(alternative.name, planRef.current.preferences.rules)) {
+      Alert.alert('Does not match your requirements', 'This ingredient alternative conflicts with a selected dietary restriction.'); return;
+    }
+    Alert.alert('Review preparation', `Replace ${name} with ${alternative.name} in all planned meals?\n\nCooking instructions and nutrition values may no longer be accurate. Review each affected meal before preparing.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Replace & review', onPress: () => {
+        setUndoPlan(planRef.current);
+        edit(p => replaceShoppingIngredient(p, name, alternative));
+        setShopSwapKey(null);
+        setTab('prep');
+      } },
+    ]);
+  }
 
   function addMeal() {
     const dayMeals = mealsForDay(plan, day);
@@ -225,7 +255,12 @@ const viewCals = viewMeals.reduce(
   }
 
   function rebuildWeek() {
-    Alert.alert('Build my week', 'This replaces all meals with a new week based on your setup. Your budget and history stay.', [
+    const candidate = buildPlan(plan.preferences, plan);
+    if (candidate.meals.length < plan.preferences.mealsPerDay * 7) {
+      Alert.alert('Not enough matching recipes', 'Your selected requirements do not have enough matching breakfast, main and snack recipes yet. Your current meals are unchanged. Try another combination or edit meals manually.');
+      return;
+    }
+    Alert.alert('Build my week', 'This replaces upcoming planned meals. Your previous activity log stays, but earlier meal IDs may no longer match. Continue?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Build', onPress: () => edit((p) => buildPlan(p.preferences, p)) },
     ]);
@@ -251,7 +286,15 @@ const viewCals = viewMeals.reduce(
           <Text style={s.brand}>GOAL'D IN</Text>
         </View>
         <Text style={s.kicker}>PLAN · SHOP · PREPARE · ACHIEVE</Text>
-        <Text style={s.h1}>Nutrition that knows the next move.</Text>
+        <Text style={s.h1}>Nutrition, your way.</Text>
+
+        <View style={[s.nav, s.navTop]}>
+          {([['today', 'TODAY'], ['plan', 'PLAN'], ['shop', 'SHOP'], ['prep', 'PREP']] as [Tab, string][]).map(([k, l]) => (
+            <Pressable key={k} accessibilityRole="tab" accessibilityState={{ selected: tab === k }} onPress={() => { if (k === 'plan') setDay(todayDay); setTab(k); }} style={[s.navItem, tab === k && s.navSelected]}>
+              <Text style={[s.navText, tab === k && s.navOn]}>{l}</Text>
+            </Pressable>
+          ))}
+        </View>
 
         {/* ================= TODAY ================= */}
         {tab === 'today' && (
@@ -267,7 +310,11 @@ const viewCals = viewMeals.reduce(
                       : `${intel.doneCount} of ${intel.meals.length} meals done`}
                   </Text>
                   {intel.meals.length > 0 && (
-                    <Text style={s.muted}>Protein {intel.proteinEaten}/{prefs.proteinTarget} g eaten</Text>
+                    <View>
+                      <Text style={s.muted}>Protein · {intel.proteinEaten} / {prefs.proteinTarget} g</Text>
+                      <Text style={s.muted}>Calories · {intel.caloriesLogged} / {prefs.calorieTarget} cal</Text>
+                      <Text style={s.muted}>Based on meals marked complete · estimates</Text>
+                    </View>
                   )}
                   {(prefs.workout || prefs.work) ? (
                     <Text style={s.muted}>{prefs.workout ? `Workout ${prefs.workout}` : ''}{prefs.workout && prefs.work ? ' · ' : ''}{prefs.work ? `Work ${prefs.work}` : ''}</Text>
@@ -309,7 +356,7 @@ const viewCals = viewMeals.reduce(
 
             {!!intel.blocked && (
               <Card>
-                <Text style={s.goldmini}>FRICTION FOUND</Text>
+                <Text style={s.goldmini}>INGREDIENT CHECK</Text>
                 <Text style={s.big}>{intel.blocked}</Text>
                 <Pressable style={s.secondary} onPress={() => setTab('shop')}><Text style={s.secondaryText}>OPEN SHOPPING LIST</Text></Pressable>
               </Card>
@@ -329,25 +376,47 @@ const viewCals = viewMeals.reduce(
         {/* ================= PLAN ================= */}
         {tab === 'plan' && (
           <>
-            <Text style={s.section}>YOUR DIET</Text>
-            <Card accent>
-              <Text style={s.goldmini}>STYLE</Text>
-              <View style={s.chips}>
-                {(Object.keys(STYLE_LABEL) as DietStyle[]).map((k) => (
-                  <Pressable key={k} onPress={() => setPref({ style: k })} style={[s.chip, prefs.style === k && s.chipOn]}>
-                    <Text style={[s.chipText, prefs.style === k && s.chipTextOn]}>{STYLE_LABEL[k]}</Text>
-                  </Pressable>
-                ))}
-              </View>
-              <Stepper label="Meals per day" value={String(prefs.mealsPerDay)} onMinus={() => setPref({ mealsPerDay: Math.max(1, prefs.mealsPerDay - 1) })} onPlus={() => setPref({ mealsPerDay: Math.min(6, prefs.mealsPerDay + 1) })} />
-              <Stepper label="First meal" value={fmt12(prefs.firstMeal)} onMinus={() => setPref({ firstMeal: stepTime(prefs.firstMeal, -15) })} onPlus={() => setPref({ firstMeal: stepTime(prefs.firstMeal, 15) })} />
-              <Stepper label="Last meal" value={fmt12(prefs.lastMeal)} onMinus={() => setPref({ lastMeal: stepTime(prefs.lastMeal, -15) })} onPlus={() => setPref({ lastMeal: stepTime(prefs.lastMeal, 15) })} />
-              <Stepper label="Daily protein target" value={`${prefs.proteinTarget} g`} onMinus={() => setPref({ proteinTarget: Math.max(40, prefs.proteinTarget - 10) })} onPlus={() => setPref({ proteinTarget: Math.min(400, prefs.proteinTarget + 10) })} />
-              <Pressable style={s.primary} onPress={rebuildWeek}><Text style={s.primaryText}>BUILD MY WEEK</Text></Pressable>
-              <Text style={s.muted}>Builds meals at evenly spaced times. You can then change any meal, time or ingredient below.</Text>
-            </Card>
+                         <Text style={s.section}>YOUR EATING STYLE</Text>
+             <Card accent>
+               <View style={[s.row, { alignItems: 'center', justifyContent: 'space-between' }]}>
+                 <View style={{ flex: 1 }}>
+                   <Text style={s.goldmini}>PERSONALIZED TO YOU</Text>
+                   <Text style={s.big}>{STYLE_LABEL[prefs.style]}</Text>
+                   <Text style={s.muted}>{prefs.rules.length ? prefs.rules.map(r => RULE_LABEL[r]).join(' · ') : 'No additional requirements selected'}</Text>
+                 </View>
+                 <Pressable style={s.editDiet} onPress={() => setDietOpen(v => !v)}><Text style={s.editDietText}>{dietOpen ? 'CLOSE' : 'EDIT MY DIET'}</Text></Pressable>
+               </View>
+               {dietOpen && <>
+                 <Text style={[s.goldmini, { marginTop: 18 }]}>EATING STYLE</Text>
+                 <View style={s.chips}>
+                   {(Object.keys(STYLE_LABEL) as DietStyle[]).map(k => (
+                     <Pressable key={k} onPress={() => setPref({ style: k })} style={[s.chip, prefs.style === k && s.chipOn]}>
+                       <Text style={[s.chipText, prefs.style === k && s.chipTextOn]}>{STYLE_LABEL[k]}</Text>
+                     </Pressable>
+                   ))}
+                 </View>
+                 <Text style={[s.goldmini, { marginTop: 14 }]}>ADDITIONAL REQUIREMENTS</Text>
+                 <View style={s.chips}>
+                   {(Object.keys(RULE_LABEL) as DietaryRule[]).map(k => (
+                     <Pressable key={k} onPress={() => setPref({ rules: prefs.rules.includes(k) ? prefs.rules.filter(x => x !== k) : [...prefs.rules, k] })} style={[s.chip, prefs.rules.includes(k) && s.chipOn]}>
+                       <Text style={[s.chipText, prefs.rules.includes(k) && s.chipTextOn]}>{RULE_LABEL[k]}</Text>
+                     </Pressable>
+                   ))}
+                 </View>
+                 <Text style={s.muted}>{RULE_NOTE}</Text>
+                 <Text style={s.muted}>Changes to your preferences do not replace existing meals until you choose BUILD MY WEEK.</Text>
+               </>}
+               <Text style={[s.goldmini, { marginTop: 14 }]}>YOUR DAILY TARGETS</Text>
+               <Stepper label="Meals per day" value={String(prefs.mealsPerDay)} onMinus={() => setPref({ mealsPerDay: Math.max(1, prefs.mealsPerDay - 1) })} onPlus={() => setPref({ mealsPerDay: Math.min(6, prefs.mealsPerDay + 1) })} />
+               <Stepper label="First meal" value={fmt12(prefs.firstMeal)} onMinus={() => setPref({ firstMeal: stepTime(prefs.firstMeal, -15) })} onPlus={() => setPref({ firstMeal: stepTime(prefs.firstMeal, 15) })} />
+               <Stepper label="Last meal" value={fmt12(prefs.lastMeal)} onMinus={() => setPref({ lastMeal: stepTime(prefs.lastMeal, -15) })} onPlus={() => setPref({ lastMeal: stepTime(prefs.lastMeal, 15) })} />
+               <Stepper label="Daily protein" value={`${prefs.proteinTarget} g`} onMinus={() => setPref({ proteinTarget: Math.max(40, prefs.proteinTarget - 10) })} onPlus={() => setPref({ proteinTarget: Math.min(400, prefs.proteinTarget + 10) })} />
+               <Stepper label="Daily calories" value={`${prefs.calorieTarget} cal`} onMinus={() => setPref({ calorieTarget: Math.max(500, prefs.calorieTarget - 100) })} onPlus={() => setPref({ calorieTarget: Math.min(10000, prefs.calorieTarget + 100) })} />
+               <Text style={s.muted}>{availableRecipeCount(prefs)} matching starter recipes. Nutrition values are estimates; generated meals may not meet your daily targets exactly.</Text>
+               <Pressable style={s.primary} onPress={rebuildWeek}><Text style={s.primaryText}>BUILD MY WEEK</Text></Pressable>
+             </Card>
 
-            <Text style={s.section}>7-DAY PLAN</Text>
+<Text style={s.section}>7-DAY PLAN</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               <View style={s.days}>
                 {[1, 2, 3, 4, 5, 6, 7].map((d) => (
@@ -364,6 +433,7 @@ const viewCals = viewMeals.reduce(
                 <View><Text style={s.mini}>PROTEIN</Text><Text style={s.total}>{viewProtein} g</Text></View>
                 <View style={{ alignItems: 'flex-end' }}><Text style={s.mini}>CALORIES</Text><Text style={s.total}>{viewCals}</Text></View>
               </View>
+              <Text style={s.muted}>{viewCals} / {prefs.calorieTarget} planned calories · estimate</Text>
               {viewProtein < prefs.proteinTarget ? (
                 <Text style={s.muted}>{prefs.proteinTarget - viewProtein} g short of your {prefs.proteinTarget} g target. Edit a meal or add one.</Text>
               ) : (
@@ -372,7 +442,10 @@ const viewCals = viewMeals.reduce(
             </Card>
 
             {viewMeals.map((m) => (
-              <MealCard key={m.id} m={m} onOpen={() => setOpenId(m.id)} />
+              <View key={m.id}>
+                <MealCard m={m} onOpen={() => setOpenId(m.id)} />
+                <Pressable style={s.secondary} onPress={() => { setSwapMealId(m.id); setSwapMode('different'); }}><Text style={s.secondaryText}>↔ SWAP MEAL</Text></Pressable>
+              </View>
             ))}
             <Pressable style={s.primary} onPress={addMeal}><Text style={s.primaryText}>+ ADD MEAL TO THIS DAY</Text></Pressable>
             {viewMeals.length > 0 && (
@@ -390,6 +463,7 @@ const viewCals = viewMeals.reduce(
                 <Text style={s.dollar}>$</Text>
                 <NumField decimal value={plan.budget} onChange={(v) => edit((p) => ({ ...p, budget: v }))} style={s.budgetInput} />
               </View>
+              <Text style={s.muted}>Meal ingredient portion estimates, not a checkout price. Actual package costs may differ.</Text>
               <View style={s.totals}>
                 <View><Text style={s.mini}>ESTIMATED</Text><Text style={s.total}>${intel.total.toFixed(2)}</Text></View>
                 <View style={{ alignItems: 'flex-end' }}>
@@ -397,23 +471,41 @@ const viewCals = viewMeals.reduce(
                   <Text style={[s.total, { color: intel.over ? '#FF8F80' : '#78CE8A' }]}>${Math.abs(intel.remaining).toFixed(2)}</Text>
                 </View>
               </View>
-              {intel.over && intel.savings.length > 0 && (
-                <Pressable style={s.primary} onPress={() => edit((p) => optimizeBudget(p))}><Text style={s.primaryText}>APPLY CHEAPER SWAPS</Text></Pressable>
-              )}
-              {intel.over && intel.savings.length === 0 && (
-                <Text style={s.muted}>Over budget. Open a meal and add a cheaper swap for its pricier ingredients, or remove a meal.</Text>
-              )}
+              {intel.over && <Text style={s.muted}>Over your ingredient estimate budget. Review compatible lower-cost meals below; changes require your approval.</Text>}
             </Card>
 
-            {intel.savings.length > 0 && (
-              <>
-                <Text style={s.section}>SMART SAVINGS</Text>
-                {intel.savings.map((x) => (
-                  <Card key={x.id}><Text style={s.big}>{x.label}</Text><Text style={s.save}>SAVE ${x.save.toFixed(2)}</Text></Card>
-                ))}
-              </>
-            )}
+            <Text style={s.section}>MAKE MY PLAN MORE AFFORDABLE</Text>
+            <Text style={s.muted}>Optional alternatives matched to your selected eating style and ingredient filters. Costs and nutrition are estimates. Verify labels and religious requirements.</Text>
+            {affordable.length === 0 && <Card><Text style={s.muted}>No lower-cost compatible starter meals found. You can still edit ingredient costs and portions in a meal.</Text></Card>}
+            {affordable.map((x) => (
+              <Card key={x.mealId}>
+                <Text style={s.goldmini}>{dayLabel(plan.startDate, x.day)} · EST. SAVE ${x.difference.toFixed(2)} PER MEAL</Text>
+                <Text style={s.big}>{x.original} → {x.replacement.title}</Text>
+                <Text style={s.muted}>${x.oldCost.toFixed(2)} → ${x.newCost.toFixed(2)} · Protein {x.replacement.protein}g · {mealCalories(x.replacement)} cal</Text>
+                <Pressable style={s.secondary} onPress={() => Alert.alert('Replace this meal?', `${x.original} → ${x.replacement.title}\nEstimated difference: $${x.difference.toFixed(2)}. Nutrition and ingredients will change. Check dietary labels and preparation requirements.`, [
+                  { text: 'Keep current', style: 'cancel' },
+                  { text: 'Replace meal', onPress: () => edit(p => ({ ...p, bought: {}, meals: p.meals.map(m => m.id === x.mealId ? x.replacement : m) })) },
+                ])}><Text style={s.secondaryText}>REVIEW & REPLACE</Text></Pressable>
+              </Card>
+            ))}
+            <Card>
+              <Text style={s.goldmini}>HOME COOKING VS. EATING OUT</Text>
+              <Text style={s.big}>What does your usual takeout meal cost?</Text>
+              <View style={s.budget}><Text style={s.dollar}>$</Text><NumField decimal value={plan.diningOutCost || 0} onChange={(v) => edit(p => ({ ...p, diningOutCost: v }))} style={s.budgetInput} /></View>
+              <Text style={s.muted}>Enter your own typical price. This comparison is not a record of money saved.</Text>
+              {plan.diningOutCost ? <Text style={s.save}>A ${plan.diningOutCost.toFixed(2)} takeout meal vs. a ${((plan.meals.reduce((sum, m) => sum + mealCost(m), 0)) / Math.max(1, plan.meals.length)).toFixed(2)} average home meal (ingredient portion estimate).</Text> : null}
+            </Card>
 
+            <Card accent>
+              <Text style={s.goldmini}>WHAT DO YOU ALREADY HAVE?</Text>
+              <Text style={s.big}>Check your kitchen before shopping</Text>
+              <Text style={s.muted}>Tap HAVE beside an ingredient only when you have enough for the whole week's recipes. Shopping checkmarks below are separate.</Text>
+              <View style={s.totals}>
+                <View><Text style={s.mini}>EST. STILL TO BUY</Text><Text style={s.total}>${intel.estimatedToBuy.toFixed(2)}</Text></View>
+                <View style={{ alignItems: 'flex-end' }}><Text style={s.mini}>EST. ON HAND</Text><Text style={s.total}>${intel.estimatedAlreadyHave.toFixed(2)}</Text></View>
+              </View>
+              <Text style={s.muted}>Based on ingredient portion estimates, not package prices or verified savings. For partial quantities, leave HAVE off and adjust your list manually.</Text>
+            </Card>
             <Text style={s.section}>GROCERY LIST · {intel.bought}/{intel.listCount}</Text>
             {list.length === 0 && <Card><Text style={s.muted}>Your list builds itself from the ingredients in your meals.</Text></Card>}
             {categories.map((cat) => (
@@ -427,8 +519,23 @@ const viewCals = viewMeals.reduce(
                         <Text style={[s.big, !!plan.bought[x.id] && s.struck]}>{x.name}</Text>
                         <Text style={s.muted}>{x.qty ? `${x.qty} · ` : ''}used in {x.uses} meal{x.uses === 1 ? '' : 's'}</Text>
                       </View>
-                      <Text style={s.price}>${x.price.toFixed(2)}</Text>
+                      <View style={{ alignItems: 'flex-end', gap: 7 }}>
+                        <Pressable onPress={() => toggleOnHand(x.id)} style={[s.check, !!plan.onHand?.[x.id] && s.checkOn, { width: 64, height: 30, alignItems: 'center', justifyContent: 'center' }]}>
+                          <Text style={{ color: plan.onHand?.[x.id] ? '#101010' : G, fontSize: 11, fontWeight: '800' }}>{plan.onHand?.[x.id] ? 'HAVE ✓' : 'HAVE?'}</Text>
+                        </Pressable>
+                        <Text style={s.price}>{plan.onHand?.[x.id] ? 'ON HAND' : `$${x.price.toFixed(2)}`}</Text>
+                        <Pressable onPress={() => setShopSwapKey(shopSwapKey === x.id ? null : x.id)}><Text style={s.goldmini}>↔ SWAP</Text></Pressable>
+                      </View>
                     </View>
+                    {shopSwapKey === x.id && <View style={{ marginTop: 12 }}>
+                      <Text style={s.muted}>Available ingredient alternatives from your recipes. Prices are per portion, not package totals.</Text>
+                      {plan.meals.flatMap(m => m.ingredients).filter(i => i.name.trim().toLowerCase() === x.id && !!i.alt && i.alt.price < i.price).slice(0, 1).map(i => (
+                        <Pressable key={i.id} style={s.secondary} onPress={() => applyIngredientSwap(x.name, i.alt!)}>
+                          <Text style={s.secondaryText}>{i.alt!.name} · est. ${i.alt!.price.toFixed(2)} / portion</Text>
+                        </Pressable>
+                      ))}
+                      {!plan.meals.some(m => m.ingredients.some(i => i.name.trim().toLowerCase() === x.id && !!i.alt && i.alt.price < i.price)) && <Text style={s.muted}>No verified recipe-compatible alternative available. Open a meal to edit ingredients manually.</Text>}
+                    </View>}
                   </Card>
                 ))}
               </View>
@@ -443,6 +550,11 @@ const viewCals = viewMeals.reduce(
         {tab === 'prep' && (
           <>
             <Text style={s.section}>MEAL PREP</Text>
+            {dietaryPrepNotes(prefs.rules).length > 0 && <Card accent>
+              <Text style={s.goldmini}>YOUR PREPARATION REQUIREMENTS</Text>
+              {dietaryPrepNotes(prefs.rules).map(note => <Text key={note} style={s.muted}>• {note}</Text>)}
+              <Text style={s.muted}>{RULE_NOTE}</Text>
+            </Card>}
             <Card>
               <Text style={s.title}>Prep once. Remove decisions all week.</Text>
               {plan.prepTasks.map((t, i) => (
@@ -459,6 +571,12 @@ const viewCals = viewMeals.reduce(
               <Pressable style={s.secondary} onPress={() => edit((p) => ({ ...p, prepTasks: p.prepTasks.map((x) => ({ ...x, done: false })) }))}><Text style={s.secondaryText}>RESET FOR A NEW WEEK</Text></Pressable>
             </Card>
 
+            <Text style={s.section}>PREPARE YOUR MEALS</Text>
+            <Text style={s.muted}>Swap an entire recipe to update ingredients and cooking steps together. Ingredient-only changes need a manual cooking and nutrition review.</Text>
+            {mealsForDay(plan, todayDay).map(m => <View key={m.id}>
+              <MealCard m={m} onOpen={() => setOpenId(m.id)} />
+              <Pressable style={s.secondary} onPress={() => { setSwapMealId(m.id); setSwapMode('different'); }}><Text style={s.secondaryText}>↔ SWAP BEFORE PREP</Text></Pressable>
+            </View>)}
             <Text style={s.section}>YOUR SCHEDULE</Text>
             <Card>
               <Text style={s.muted}>Shown on your Today screen so meals fit your day.</Text>
@@ -474,25 +592,43 @@ const viewCals = viewMeals.reduce(
               <Pref a="Meals per day" b={String(prefs.mealsPerDay)} />
               <Pref a="Eating window" b={`${fmt12(prefs.firstMeal)} – ${fmt12(prefs.lastMeal)}`} />
               <Pref a="Protein target" b={`${prefs.proteinTarget} g / day`} />
+              <Pref a="Calorie target" b={`${prefs.calorieTarget} cal / day`} />
             </Card>
           </>
         )}
 
-        {/* ================= NAV ================= */}
-        <View style={s.nav}>
-          {([['today', 'TODAY'], ['plan', 'PLAN'], ['shop', 'SHOP'], ['prep', 'PREP']] as [Tab, string][]).map(([k, l]) => (
-            <Pressable key={k} onPress={() => { if (k === 'plan') setDay(todayDay); setTab(k); }} style={s.navItem}>
-              <View style={[s.dot, tab === k && s.dotOn]} />
-              <Text style={[s.navText, tab === k && s.navOn]}>{l}</Text>
-            </Pressable>
-          ))}
-        </View>
+        {undoPlan && <Pressable style={s.secondary} onPress={() => { const old = undoPlan; setUndoPlan(null); edit(() => old); }}><Text style={s.secondaryText}>↶ UNDO LAST SWAP</Text></Pressable>}
         <Pressable style={s.secondary} onPress={() => { dirtyRef.current = true; void flush(); }} disabled={status === 'saving'}>
           <Text style={[s.secondaryText, status === 'error' && { color: '#FF8F80' }]}>{statusText}</Text>
         </Pressable>
         <Text style={s.disclaimer}>GOAL'D IN organizes the plan you choose and does not override clinician instructions.</Text>
       </ScrollView>
 
+      {/* ================= SHARED MEAL SWAP ================= */}
+      {swapMealId && (() => {
+        const target = plan.meals.find(m => m.id === swapMealId);
+        if (!target) return null;
+        const options = mealSwapOptions(plan, target, swapMode);
+        return <View style={s.overlay}>
+          <Pressable style={{ flex: 1 }} onPress={() => setSwapMealId(null)} />
+          <View style={s.sheet}><View style={s.handle} /><ScrollView>
+            <Text style={s.goldmini}>SWAP · {target.title}</Text>
+            <Text style={s.title}>Find a better fit</Text>
+            <View style={s.chips}>{([['cheaper','💰 CHEAPER'], ['nutrition','🥗 NUTRITION'], ['different','🍽 DIFFERENT']] as [MealSwapMode,string][]).map(([mode,label]) =>
+              <Pressable key={mode} style={[s.chip, swapMode === mode && s.chipOn]} onPress={() => setSwapMode(mode)}><Text style={[s.chipText, swapMode === mode && s.chipTextOn]}>{label}</Text></Pressable>
+            )}</View>
+            <Text style={s.muted}>Only recipes matching your selected style and basic ingredient filters appear. Verify labels, allergies, kosher and halal requirements yourself.</Text>
+            {!options.length && <Text style={s.muted}>No matching options in the current recipe library.</Text>}
+            {options.map((m, i) => <Card key={`${m.title}-${i}`}>
+              <Text style={s.big}>{m.title}</Text>
+              <Text style={s.muted}>${mealCost(m).toFixed(2)} / meal · {m.protein}g protein · {mealCalories(m)} cal</Text>
+              <Text style={s.muted}>{m.ingredients.map(x => x.name).join(', ')}</Text>
+              <Pressable style={s.secondary} onPress={() => applyMealSwap(target.id, m)}><Text style={s.secondaryText}>USE THIS MEAL</Text></Pressable>
+            </Card>)}
+            <Pressable style={s.secondary} onPress={() => setSwapMealId(null)}><Text style={s.secondaryText}>CANCEL</Text></Pressable>
+          </ScrollView></View>
+        </View>;
+      })()}
       {/* ================= MEAL EDITOR ================= */}
       {current && (
         <View style={s.overlay}>
@@ -511,8 +647,10 @@ const viewCals = viewMeals.reduce(
                 <MacroInput l="CARB g" v={current.carb} onChange={(v) => updateMeal(current.id, { carb: v })} />
                 <MacroInput l="FAT g" v={current.fat} onChange={(v) => updateMeal(current.id, { fat: v })} />
               </View>
-              <Text style={s.cost}>{mealCalories(current)} CAL · EST. ${mealCost(current).toFixed(2)}</Text>
+              <Text style={s.cost}>{mealCalories(current)} CAL · EST. ${mealCost(current).toFixed(2)} PER MEAL</Text>
+              {(plan.diningOutCost || 0) > 0 && <Text style={s.muted}>Vs. your usual ${plan.diningOutCost?.toFixed(2)} takeout meal: ${Math.max(0, (plan.diningOutCost || 0) - mealCost(current)).toFixed(2)} potential difference, not confirmed savings.</Text>}
 
+              <Pressable style={s.secondary} onPress={() => { setOpenId(null); setSwapMealId(current.id); setSwapMode('different'); }}><Text style={s.secondaryText}>↔ SWAP THIS MEAL</Text></Pressable>
               <Text style={s.section}>YOU NEED</Text>
               {current.ingredients.map((i) => (
                 <View key={i.id} style={s.ingBox}>
@@ -630,7 +768,7 @@ const s = StyleSheet.create({
   back: { color: M, fontWeight: '900' },
   brand: { color: G, fontWeight: '900', letterSpacing: 2 },
   kicker: { color: G, fontSize: 11, fontWeight: '900', letterSpacing: 1.4, marginTop: 28 },
-  h1: { color: T, fontSize: 31, lineHeight: 36, fontWeight: '900', marginTop: 8, marginBottom: 8 },
+  h1: { color: T, fontSize: 30, lineHeight: 36, fontWeight: '900', marginTop: 8, marginBottom: 3 },
   card: { backgroundColor: C, borderWidth: 1, borderColor: '#292929', borderRadius: 22, padding: 18, marginTop: 10 },
   cardAccent: { backgroundColor: '#121009', borderColor: '#705A20' },
   hero: { flexDirection: 'row', alignItems: 'center' },
@@ -673,11 +811,15 @@ const s = StyleSheet.create({
   prep: { color: T, fontSize: 14, lineHeight: 22, marginTop: 10 },
   pref: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#252525' },
   prefVal: { color: T, fontSize: 12, fontWeight: '800', maxWidth: '62%', textAlign: 'right' },
-  nav: { flexDirection: 'row', backgroundColor: '#111', borderRadius: 18, borderWidth: 1, borderColor: '#292929', marginTop: 22, padding: 8 },
-  navItem: { flex: 1, alignItems: 'center', paddingVertical: 7 },
+  nav: { flexDirection: 'row', backgroundColor: '#111', borderRadius: 16, borderWidth: 1, borderColor: '#343025', padding: 5 },
+  navTop: { marginTop: 20, marginBottom: 14 },
+  navSelected: { backgroundColor: '#352C14', borderRadius: 11 },
+  editDiet: { borderColor: G, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 10, borderRadius: 12, marginLeft: 8 },
+  editDietText: { color: G, fontWeight: '900', fontSize: 9 },
+  navItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 13 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#444', marginBottom: 5 },
   dotOn: { backgroundColor: G },
-  navText: { color: M, fontSize: 9, fontWeight: '900' },
+  navText: { color: M, fontSize: 11, fontWeight: '900' },
   navOn: { color: G },
   disclaimer: { color: '#666', fontSize: 10, lineHeight: 15, textAlign: 'center', marginTop: 14 },
   overlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,.72)' },

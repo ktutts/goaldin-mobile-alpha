@@ -27,6 +27,8 @@ const BG = '#0B0B0D';
 const CARD = '#121214';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
+import { prepareWorkout } from '@/lib/workoutPreparation';
+import { prepareNextMoveLaunch } from '@/lib/workoutLaunch';
 
 // TODAY is not a list of every goal. It shows only commitments that belong
 // to the current local day, plus user-chosen additions. No synthetic percent.
@@ -85,7 +87,8 @@ export default function Today() {
   const [scheduleToday, setScheduleToday] = useState<Record<string, TodaySchedule>>({});
   const [chosenToday, setChosenToday] = useState<string[]>([]);
   const [showCompleted, setShowCompleted] = useState(false);
-  const [showOtherGoals, setShowOtherGoals] = useState(false);
+  const [showOtherGoals, setShowOtherGoals] = useState(true);
+  const [showGoalPicker, setShowGoalPicker] = useState(false);
   const [showTodayTools, setShowTodayTools] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -232,6 +235,11 @@ const chooseCapacity = useCallback(
         setChosenToday(manual.filter((id) => activeIds.has(id)));
         setScheduleToday(scheduleMap);
         await loadCapacity();
+
+        // TODAY reads existing Moves. It never creates a new one while the
+        // user may be reviewing a completed milestone. Coach preparation is
+        // handled by the explicit per-goal flow after user approval.
+
       }
 
       if (!silent) setLoading(false);
@@ -296,24 +304,46 @@ const chooseCapacity = useCallback(
     const doneActions = goalActions.filter((a) => a.status === 'completed'
       && happenedToday((a as Action & { completed_at?: string | null }).completed_at));
     const lastDone = doneActions[doneActions.length - 1];
+    const todaySchedule = scheduleToday[goal.id] ?? null;
+    // Each completed action can satisfy one scheduled occurrence today. This
+    // preserves a later session instead of hiding the entire goal after one.
+    const remainingTimes = todaySchedule?.times.slice(doneActions.length) ?? [];
+    const workout = nextMove ? prepareWorkout(Array.isArray(nextMove.steps) ? nextMove.steps : []) : null;
     return {
       goal, nextMove, activeStage: active?.title ?? null,
       stagesCompleted: stages.filter((m) => m.status === 'completed').length,
-      todaySchedule: scheduleToday[goal.id] ?? null,
+      todaySchedule: todaySchedule ? {times: remainingTimes} : null,
       chosen: chosenToday.includes(goal.id),
+      completedCountToday: doneActions.length,
+      workout,
       lastDone,
     };
   });
   const dueToday = goalData.filter((item) =>
-    (item.todaySchedule || item.chosen) && !item.lastDone
+    ((item.todaySchedule?.times.length ?? 0) > 0 || item.chosen)
   ).sort((a, b) =>
     (a.todaySchedule?.times[0] ?? '99:99').localeCompare(b.todaySchedule?.times[0] ?? '99:99')
   );
   const completedToday = goalData.filter((item) => !!item.lastDone);
-  const otherGoals = goalData.filter((item) =>
-    !dueToday.some((due) => due.goal.id === item.goal.id) && !item.lastDone
-  );
+  // Every active goal remains accessible even after today's Move is done.
+  const otherGoals = goalData;
   const weekdayName = WEEKDAYS[new Date().getDay()];
+
+  const openReadyMove = async (goal: Goal, nextMove?: Action) => {
+    if (!nextMove?.milestone_id) {
+      router.push(`/goal/${goal.id}`);
+      return;
+    }
+    try {
+      await prepareNextMoveLaunch({
+        goalId: goal.id, milestoneId: nextMove.milestone_id,
+        actionId: nextMove.id, actionTitle: nextMove.title,
+        steps: Array.isArray(nextMove.steps) ? nextMove.steps : [],
+      });
+    } catch (error) {console.warn('Workout preview unavailable:', error);}
+    // No sensor, timer, or session starts until the user acts in Workspace.
+    router.push(`/goal/milestone/${nextMove.milestone_id}`);
+  };
 
   return (
     <View style={s.page}>
@@ -392,13 +422,13 @@ const chooseCapacity = useCallback(
         </View>
         {dueToday.length === 0 ? (
           <View style={n.quietCard}>
-            <Text style={n.quietTitle}>Your day is yours.</Text>
-            <Text style={n.quietBody}>No unfinished commitments are scheduled or chosen for today. Enjoy the space, or choose something meaningful when you want.</Text>
-            <Pressable style={n.quietLink} onPress={() => setShowOtherGoals(true)}>
+            <Text style={n.quietTitle}>{completedToday.length ? 'You made progress today.' : 'Your day is yours.'}</Text>
+            <Text style={n.quietBody}>No commitments are waiting right now. Choose an active goal to keep going, or enjoy your time.</Text>
+            <Pressable style={n.quietLink} onPress={() => setShowGoalPicker(true)}>
               <Text style={n.quietLinkText}>CHOOSE A NEXT MOVE  →</Text>
             </Pressable>
           </View>
-        ) : dueToday.map(({ goal, nextMove, activeStage, todaySchedule, chosen }) => (
+        ) : dueToday.map(({ goal, nextMove, activeStage, todaySchedule, chosen, workout }) => (
           <View key={goal.id} style={n.focusCard}>
             <View style={n.focusTop}>
               <View style={n.purposeIcon}>
@@ -410,13 +440,14 @@ const chooseCapacity = useCallback(
               </View>
               {todaySchedule ? <Text style={n.focusTime}>{todaySchedule.times.map(clockLabel).join(' · ')}</Text> : null}
             </View>
-            <Text style={n.focusAction}>{nextMove?.title ?? 'Choose the next meaningful move'}</Text>
+            <Text style={n.focusAction}>{nextMove?.title ?? 'Review your milestone or prepare the next Move'}</Text>
             {activeStage ? <Text style={n.focusStage}>Current stage · {activeStage}</Text> : null}
+            {workout ? <Text style={n.focusStage}>
+              {Math.round(workout.totalSeconds / 60)} min guided timer · warm-up, activity and cooldown prepared · heart rate optional
+            </Text> : null}
             <Pressable style={n.focusButton}
-              onPress={() => nextMove?.milestone_id
-                ? router.push(`/goal/milestone/${nextMove.milestone_id}`)
-                : router.push(`/goal/${goal.id}`)}>
-              <Text style={n.focusButtonText}>{nextMove?.milestone_id ? 'OPEN MY NEXT MOVE' : 'OPEN MY JOURNEY'}   →</Text>
+              onPress={() => void openReadyMove(goal, nextMove)}>
+              <Text style={n.focusButtonText}>{nextMove?.milestone_id ? (workout ? 'OPEN READY WORKOUT' : 'OPEN MY NEXT MOVE') : 'OPEN MY JOURNEY'}   →</Text>
             </Pressable>
             <View style={n.focusLinks}>
               <Pressable onPress={() => router.push(`/goal/${goal.id}`)}>
@@ -457,7 +488,7 @@ const chooseCapacity = useCallback(
           <Pressable style={n.disclosure} onPress={() => setShowOtherGoals((open) => !open)}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
               <Ionicons name="albums-outline" size={20} color={GOLD_BRIGHT} />
-              <Text style={n.disclosureLabel}>OTHER GOALS · {otherGoals.length}</Text>
+              <Text style={n.disclosureLabel}>YOUR GOALS · {otherGoals.length}</Text>
             </View>
             <Ionicons name={showOtherGoals ? 'chevron-up' : 'chevron-down'} size={17} color={GOLD_BRIGHT} />
           </Pressable>
@@ -469,12 +500,40 @@ const chooseCapacity = useCallback(
                   {stagesCompleted > 0 ? `${stagesCompleted} completed stage${stagesCompleted > 1 ? 's' : ''} · ` : ''}{nextMove?.title ?? 'Your Journey is ready to explore'}
                 </Text>
               </Pressable>
-              <Pressable style={n.choosePill} onPress={() => void chooseForToday(goal.id, true)}>
-                <Text style={n.chooseText}>TODAY +</Text>
+              <Pressable style={n.choosePill} onPress={() => void chooseForToday(goal.id, !chosenToday.includes(goal.id))}>
+                <Text style={n.chooseText}>{chosenToday.includes(goal.id) ? 'ADDED ✓' : 'TODAY +'}</Text>
               </Pressable>
             </View>
           )) : <Text style={n.emptyOther}>All your active goals are already accounted for.</Text>)}
         </View>
+
+        <Modal visible={showGoalPicker} transparent animationType="fade" onRequestClose={() => setShowGoalPicker(false)}>
+          <View style={{ flex: 1, justifyContent: 'center', padding: 22, backgroundColor: '#000000CC' }}>
+            <View style={{ backgroundColor: CARD, borderColor: '#66512A', borderWidth: 1, borderRadius: 18, padding: 18, maxHeight: '75%' }}>
+              <Text style={{ color: GOLD_BRIGHT, fontSize: 19, fontWeight: '900', marginBottom: 5 }}>CHOOSE A GOAL</Text>
+              <Text style={{ color: '#BBBBBB', marginBottom: 14 }}>Open a Journey or add it to TODAY. Your schedule stays unchanged.</Text>
+              <ScrollView>
+                {goalData.map(({ goal, nextMove }) => (
+                  <View key={goal.id} style={{ borderTopColor: '#36312A', borderTopWidth: 1, paddingVertical: 12, gap: 8 }}>
+                    <Text style={{ color: '#FFFFFF', fontWeight: '800' }}>{goal.title}</Text>
+                    <Text style={{ color: '#AAAAAA', fontSize: 12 }}>{nextMove?.title ?? 'Open Journey to review your Path'}</Text>
+                    <View style={{ flexDirection: 'row', gap: 16 }}>
+                      <Pressable accessibilityRole="button" onPress={() => { setShowGoalPicker(false); router.push(`/goal/${goal.id}`); }}>
+                        <Text style={{ color: GOLD_BRIGHT, fontWeight: '800' }}>OPEN JOURNEY ↗</Text>
+                      </Pressable>
+                      <Pressable accessibilityRole="button" onPress={() => { void chooseForToday(goal.id, true); setShowGoalPicker(false); }}>
+                        <Text style={{ color: GOLD_BRIGHT, fontWeight: '800' }}>ADD TO TODAY +</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ))}
+              </ScrollView>
+              <Pressable onPress={() => setShowGoalPicker(false)} style={{ paddingTop: 16, alignItems: 'center' }}>
+                <Text style={{ color: '#DDDDDD', fontWeight: '800' }}>CLOSE</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
 
         <View style={n.bottomActions}>
           <View style={n.toolsPanel}>
@@ -511,6 +570,22 @@ const chooseCapacity = useCallback(
                   <View style={n.toolItemCopy}>
                     <Text style={n.toolItemTitle}>Meal Plan</Text>
                     <Text style={n.toolItemDetail}>Plan meals around your goals</Text>
+                  </View>
+                  <Ionicons name="arrow-forward" size={17} color={GOLD_BRIGHT} />
+                </Pressable>
+                <View style={n.toolDivider} />
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Money Moves, track income and savings"
+                  style={({ pressed }) => [n.toolItem, pressed && s.pressed]}
+                  onPress={() => router.push('/money-moves' as any)}
+                >
+                  <View style={n.toolItemIcon}>
+                    <Ionicons name="wallet-outline" size={19} color={GOLD_BRIGHT} />
+                  </View>
+                  <View style={n.toolItemCopy}>
+                    <Text style={n.toolItemTitle}>Money Moves</Text>
+                    <Text style={n.toolItemDetail}>Earn more · save more · take action</Text>
                   </View>
                   <Ionicons name="arrow-forward" size={17} color={GOLD_BRIGHT} />
                 </Pressable>

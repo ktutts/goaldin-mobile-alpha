@@ -9,6 +9,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { Action, Goal } from '@/types/models';
 import { confirmMilestone } from '../../lib/confirmMilestone';
+import { isMilestoneReadyForReview } from '../../lib/milestoneReview';
 import GoalStageRing from '../../components/GoalStageRing';
 import GoalTimePicker from '../../components/GoalTimePicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -16,6 +17,9 @@ import { getCapacityForDate, capacityLabels } from '@/lib/capacity';
 import Constants from 'expo-constants';
 import { getGoalCoachResponse, getGoalProgramProposal, getQuickMoveProposal } from "@/lib/goalCoach";
 import type { CoachEvidence, CoachScheduleAdvice } from "@/lib/goalCoach";
+import { prepareWorkout } from '@/lib/workoutPreparation';
+import { prepareNextMoveLaunch } from '@/lib/workoutLaunch';
+import { ensureNextMoveReady } from '@/lib/nextMoveReadiness';
 import {
   ExpoSpeechRecognitionModule,
   useSpeechRecognitionEvent,
@@ -103,8 +107,9 @@ const getNotifications = async () => {
 
 
 export default function GoalDetail() {
-  const params = useLocalSearchParams<{ id?: string }>();
+  const params = useLocalSearchParams<{ id?: string; openNextMove?: string }>();
   const goalId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const openedReminderMove = useRef(false);
   const [suggestedCompletedSteps, setSuggestedCompletedSteps] =
   useState<string[]>([]);
   const [goal, setGoal] = useState<Goal | null>(null);
@@ -125,13 +130,62 @@ const [showCoachInput, setShowCoachInput] = useState(false);
   const [pendingTime, setPendingTime] = useState<Date>(defaultTimePickerDate);
   const [showCustomPicker, setShowCustomPicker] = useState(false);
   const [savedSchedule, setSavedSchedule] = useState<SavedGoalSchedule | null>(null);
+  const [autoRoutine, setAutoRoutine] = useState(false);
+  const [changingAutoRoutine, setChangingAutoRoutine] = useState(false);
   const [legacyScheduleUntracked, setLegacyScheduleUntracked] = useState(false);
+  // Older goals are opt-in, never silently switched to automatic progression.
+  useEffect(() => {
+    if (!goalId) return;
+    let cancelled = false;
+    const loadPreference = async () => {
+      try {
+        const local = await AsyncStorage.getItem(`goaldin-auto-prepare-${goalId}`);
+        const { data } = await supabase.from('events')
+          .select('event_type,metadata').eq('object_id', goalId)
+          .in('event_type', ['goal_created','goal_preparation_preference_updated'])
+          .order('created_at', { ascending: false }).limit(3);
+        const latest = (data ?? [])[0];
+        const cloudChoice = latest?.event_type === 'goal_created'
+          ? latest.metadata?.when_context?.auto_prepare_routine
+          : latest?.metadata?.enabled;
+        const enabled = typeof cloudChoice === 'boolean' ? cloudChoice : local === 'true';
+        if (!cancelled) setAutoRoutine(enabled);
+      } catch (error) { console.warn('Could not read Coach readiness preference:', error); }
+    };
+    void loadPreference();
+    return () => { cancelled = true; };
+  }, [goalId]);
+  const changeAutoRoutine = async () => {
+    if (!goalId || changingAutoRoutine) return;
+    const enabled = !autoRoutine;
+    setChangingAutoRoutine(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Sign in first.');
+      const { error } = await supabase.from('events').insert({
+        user_id: user.id, object_id: goalId,
+        event_type: 'goal_preparation_preference_updated',
+        metadata: { enabled },
+      });
+      if (error) throw error;
+      await AsyncStorage.setItem(`goaldin-auto-prepare-${goalId}`, String(enabled));
+      setAutoRoutine(enabled);
+      if (enabled) {
+        void ensureNextMoveReady(goalId).then((result) => {
+          if (result.state === 'prepared') setRefreshKey((n) => n + 1);
+        }).catch((error) => console.warn('Could not prepare enabled Next Move:', error));
+      }
+    } catch (error: any) {
+      Alert.alert('Could not change Coach setting', error?.message ?? 'Try again.');
+    } finally { setChangingAutoRoutine(false); }
+  };
   const [showScheduleSavedModal, setShowScheduleSavedModal] = useState(false);
   const [showTimerMenu, setShowTimerMenu] = useState(false);
   const [showGoalCardChecklist, setShowGoalCardChecklist] = useState(false);
   const [showGoalCardCoachOptions, setShowGoalCardCoachOptions] = useState(false);
   const [timerMinutes, setTimerMinutes] = useState('10');
   const [showMilestoneConfirmed, setShowMilestoneConfirmed] = useState(false);
+  const [reviewDeferredMilestoneId, setReviewDeferredMilestoneId] = useState<string | null>(null);
   const [coachMessage, setCoachMessage] = useState<string | null>(null);
   const [coachThinking, setCoachThinking] = useState(false);
   const [adaptedMove, setAdaptedMove] = useState<{
@@ -686,8 +740,14 @@ if (upcomingMove) {
   );
 
   setCoachMessage(
-    'Next Move complete. Review your progress and confirm this milestone when you are ready.'
+    autoRoutine ? 'Next Move complete. The Coach will prepare your next routine action within this milestone.' : 'Next Move complete. Review the milestone or ask for another action when ready.'
   );
+  // Non-blocking: the user is free to leave. This never marks the milestone achieved.
+  void ensureNextMoveReady(goalId).then((result) => {
+    if (result.state === 'prepared' || result.state === 'ready') setRefreshKey((n) => n + 1);
+    else if (result.state === 'review_milestone') setCoachMessage('Your progress may meet this milestone. Review and confirm it when ready.');
+    else if (result.state === 'needs_review') setCoachMessage('Next Move complete. Your next action needs a quick review in YOUR PATH.');
+  }).catch((error) => console.warn('Could not prepare future Next Move:', error));
 
   return;
 }
@@ -737,21 +797,32 @@ if (upcomingMove) {
         continuationNote.trim() ? `Additional user preference: ${continuationNote.trim()}` : '',
       ].filter(Boolean).join('\n');
 
-      const response = await getGoalCoachResponse({
-        goalTitle: goal.title,
-        nextMoveTitle: latestMove?.title ?? '',
-        nextMoveMinutes: latestMove?.estimated_minutes ?? null,
-        nextMoveSteps: Array.isArray(latestMove?.steps) ? latestMove.steps : [],
-        completedSteps: Array.isArray(latestMove?.completed_steps) ? latestMove.completed_steps : [],
-        milestones: milestones.map((m) => m.title),
-        progressEntries: previousProgress ?? [],
-        userMessage,
+      // Continuation needs a dedicated mode. Routine coaching intentionally
+      // returns proposedMove:null for a move that was just completed.
+      const { data: response, error: continuationError } = await supabase.functions.invoke('goal-coach', {
+        body: {
+          mode: 'continue-milestone', goalTitle: goal.title,
+          currentMilestone: activeMilestone.title,
+          milestoneDescription: activeMilestone.description ?? '',
+          completedMoves: completedMoves.map((move) => move.title),
+          scheduleSummary: scheduleText,
+          progressEntries: previousProgress ?? [],
+          userMessage,
+        },
       });
+      if (continuationError || response?.error) {
+        throw continuationError ?? new Error(String(response.error));
+      }
+      if (response?.milestoneReached === true) {
+        setCoachMessage(response.message ?? 'You may have reached this milestone. Review and confirm it when ready.');
+        setContinuationError('The Coach sees evidence that this milestone may have been reached. Review it instead of adding another task.');
+        return;
+      }
       const suggestion = response?.proposedMove;
       const title = typeof suggestion?.title === 'string' ? suggestion.title.trim() : '';
       const steps = Array.isArray(suggestion?.steps)
-        ? suggestion.steps.filter((step): step is string => typeof step === 'string')
-            .map((step) => step.trim()).filter(Boolean).slice(0, 5)
+        ? suggestion.steps.filter((step: unknown): step is string => typeof step === 'string')
+            .map((step: string) => step.trim()).filter(Boolean).slice(0, 5)
         : [];
       if (!title) {
         setContinuationError(response?.message
@@ -1128,39 +1199,54 @@ if (upcomingMove) {
     }
   };
 
+  // The user's explicit confirmation owns the actual outcome, even when an
+  // earlier-than-planned success leaves some proposed milestones unfinished.
+  // Never silently complete or delete those unfinished milestone records.
+  const finishConfirmedGoal = async () => {
+    if (!goalId || outcomeSaving) return;
+    setOutcomeSaving(true);
+    try {
+      const { data: finished, error: finishError } = await supabase
+        .from('goals')
+        .update({ status: 'completed', completed_at: new Date().toISOString() })
+        .eq('id', goalId).eq('status', 'active')
+        .select('id').maybeSingle();
+      if (finishError || !finished) throw finishError ?? new Error('This goal has already changed. Refresh and try again.');
+      setPathDraft(null);
+      setRefreshKey((value) => value + 1);
+      Alert.alert('GOAL’D IN ✓', 'You confirmed the real outcome. Your work and original plan remain in your history.');
+    } catch (err: any) {
+      Alert.alert('Goal not updated', err?.message ?? 'Try again.');
+    } finally {
+      setOutcomeSaving(false);
+    }
+  };
+
   const confirmActualGoalOutcome = () => {
     if (!goal || !goalId || goal.is_practice || outcomeSaving) return;
-    Alert.alert(
-      'Did you reach your actual goal?',
-      `Have you genuinely achieved "${goal.title}"? Finishing a milestone or a checklist alone does NOT mean the whole goal is complete.`,
-      [
+    Alert.alert('Did you reach your actual goal?',
+      `Have you genuinely achieved "${goal.title}"? A checklist or training milestone by itself is not the outcome.`, [
         { text: 'Not yet', style: 'cancel' },
-        { text: 'Yes, goal achieved', onPress: async () => {
-          setOutcomeSaving(true);
+        { text: 'Yes, I achieved it', onPress: async () => {
           try {
-            const { data: stages, error: stagesError } = await supabase
-              .from('milestones').select('status').eq('goal_id', goalId);
-            if (stagesError) throw stagesError;
-            if (!stages?.length || stages.some((stage) => stage.status !== 'completed')) {
-              throw new Error('There are still unfinished milestones. Review your Path before confirming the final outcome.');
+            const { data: stages, error } = await supabase.from('milestones')
+              .select('status').eq('goal_id', goalId);
+            if (error) throw error;
+            const unfinished = (stages ?? []).filter((stage) => stage.status !== 'completed').length;
+            if (unfinished > 0) {
+              Alert.alert('You finished ahead of your plan?',
+                `${unfinished} planned milestone${unfinished === 1 ? '' : 's'} remain unfinished. If you really achieved the outcome, you can still confirm it. Your history will be preserved.`, [
+                  {text: 'Review my Path', style: 'cancel'},
+                  {text: 'Confirm actual achievement', onPress: () => {void finishConfirmedGoal();}},
+                ]);
+              return;
             }
-            const { data: finished, error: finishError } = await supabase
-              .from('goals')
-              .update({ status: 'completed', completed_at: new Date().toISOString() })
-              .eq('id', goalId).eq('status', 'active')
-              .select('id').maybeSingle();
-            if (finishError || !finished) throw finishError ?? new Error('This goal has already changed. Refresh and try again.');
-            setPathDraft(null);
-            setRefreshKey((value) => value + 1);
-            Alert.alert('GOAL’D IN ✓', 'You confirmed the actual outcome. Your completed milestones and progress remain in your history.');
+            await finishConfirmedGoal();
           } catch (err: any) {
-            Alert.alert('Goal not updated', err?.message ?? 'Try again.');
-          } finally {
-            setOutcomeSaving(false);
+            Alert.alert('Could not check milestones', err?.message ?? 'Try again.');
           }
-        } },
-      ],
-    );
+        }},
+      ]);
   };
 
   const approveAdjustedMove = async () => {
@@ -1336,6 +1422,32 @@ const displayedMoveMinutes =
 const displayedMoveSteps =
   adaptedMove?.steps ??
   (Array.isArray(nextPending?.steps) ? nextPending.steps : []);
+ const preparedWorkoutPreview = prepareWorkout(displayedMoveSteps);
+ // Reminder deep link resolves the CURRENT action on the device (not a stale
+ // action frozen at the time the weekly reminder was scheduled).
+ useEffect(() => {
+   if (params.openNextMove !== '1' || !goalId || loading || openedReminderMove.current) return;
+   openedReminderMove.current = true;
+   if (!nextPending?.milestone_id) return; // Goal detail stays open if no move.
+   void prepareNextMoveLaunch({
+     goalId, milestoneId: nextPending.milestone_id, actionId: nextPending.id,
+     actionTitle: nextPending.title,
+     steps: Array.isArray(nextPending.steps) ? nextPending.steps : [],
+   }).catch((error) => console.warn('Workout preparation unavailable:', error))
+     .finally(() => router.replace(`/goal/milestone/${nextPending.milestone_id}` as any));
+ }, [params.openNextMove, goalId, loading, nextPending?.id, nextPending?.milestone_id]);
+
+ const openPreparedWorkspace = async () => {
+   if (!goalId || !nextPending?.milestone_id) return;
+   try {
+     await prepareNextMoveLaunch({
+       goalId, milestoneId: nextPending.milestone_id, actionId: nextPending.id,
+       actionTitle: nextPending.title,
+       steps: Array.isArray(nextPending.steps) ? nextPending.steps : [],
+     });
+   } catch (error) { console.warn('Could not cache prepared workout:', error); }
+   router.push(`/goal/milestone/${nextPending.milestone_id}` as any);
+ };
   const savedCompletedSteps = Array.isArray(nextPending?.completed_steps)
   ? nextPending.completed_steps
   : [];
@@ -1349,6 +1461,41 @@ const unfinishedDisplayedSteps = displayedMoveSteps.filter(
     return !savedCompletedSteps.includes(step);
   }
 );
+
+// A completed set of Moves invites a human milestone review; it does not
+// establish that the outcome was actually achieved. Use the same test in the
+// top-level completion panel and in YOUR PATH.
+const readyToReviewMilestone = milestones.find((milestone) =>
+  isMilestoneReadyForReview(milestone, actions)
+);
+const reviewDeferred = readyToReviewMilestone?.id === reviewDeferredMilestoneId;
+const hasCompletedMove = actions.some((action) => action.status === 'completed');
+
+const requestMilestoneReview = (milestone: { id: string; title: string }) => {
+  Alert.alert(
+    'Milestone review',
+    `Have you actually achieved "${milestone.title}"? Completing planned actions alone does not necessarily mean the milestone is achieved.`,
+    [
+      {
+        text: 'Not yet',
+        onPress: () => setReviewDeferredMilestoneId(milestone.id),
+      },
+      {
+        text: 'Yes, achieved',
+        onPress: async () => {
+          try {
+            await confirmMilestone(milestone.id);
+            setReviewDeferredMilestoneId(null);
+            setRefreshKey((current) => current + 1);
+            setShowMilestoneConfirmed(true);
+          } catch (error: any) {
+            Alert.alert('Could not confirm milestone', error?.message ?? 'Please try again.');
+          }
+        },
+      },
+    ]
+  );
+};
 
 const nextTwoSteps = unfinishedDisplayedSteps.slice(0, 2);
 
@@ -1483,9 +1630,9 @@ const completedMilestones = milestones.filter(
               const id = await Notifications.scheduleNotificationAsync({
                 content: {
                   title: `GOAL'D IN — ${goal?.title ?? 'YOUR GOAL'}`,
-                  body: nextPending?.title ?? `Time to make progress on ${goal?.title ?? 'your goal'}.`,
+                  body: `Your next step is ready. Tap to open your goal and prepare your tools.`,
                   sound: true,
-                  data: { goalId, source: 'goal-schedule' },
+                  data: { goalId, source: 'goal-schedule', openNextMove: true },
                 },
                 trigger: {
                   type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
@@ -1917,7 +2064,7 @@ const completedMilestones = milestones.filter(
     </Pressable>
   </View>
 )} 
-          <Text style={s.nextMoveLabel}>⚡  YOUR NEXT MOVE</Text>
+          <Text style={s.nextMoveLabel}>⚡  CURRENT MOVE</Text>
 
           {nextPending ? (
             <>
@@ -1945,11 +2092,18 @@ const completedMilestones = milestones.filter(
     </Pressable>
   </View>
 ) : null}
+{preparedWorkoutPreview && !adaptedMove ? (
+  <Text style={{ color: '#BFB39B', marginTop: 9, fontSize: 12 }}>
+    {Math.round(preparedWorkoutPreview.totalSeconds / 60)} min guided workout · timer stages prepared · heart rate optional · starts only when you press Start
+  </Text>
+) : null}
 {workspaceMilestone?.id && (
   <Pressable
-    onPress={() => router.push(`/goal/milestone/${workspaceMilestone.id}` as any)}
+    onPress={() => void openPreparedWorkspace()}
     style={{ backgroundColor: '#D8B24A', borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 14 }}>
-    <Text style={{ color: '#101010', fontWeight: '900', letterSpacing: 1 }}>OPEN WORKSPACE →</Text>
+    <Text style={{ color: '#101010', fontWeight: '900', letterSpacing: 1 }}>
+      {preparedWorkoutPreview && !adaptedMove ? 'OPEN READY WORKOUT →' : 'OPEN WORKSPACE →'}
+    </Text>
   </Pressable>
 )}
 {displayedMoveSteps.length > 0 && (
@@ -2105,7 +2259,7 @@ unfinishedDisplayedSteps.length === 0 ? (      <Text
         textAlign: 'center',
       }}
     >
-      CONTINUE MY PATH ✓
+      COMPLETE MOVE ✓
     </Text>
   </Pressable>
 ) : null}
@@ -2662,19 +2816,54 @@ setAdaptedMove({
               }}
             >
               <Text style={{ color: '#D8B24A', fontWeight: '900', fontSize: 15 }}>
-                {goalComplete ? 'GOAL ACHIEVED ✓' : 'LAST NEXT MOVE COMPLETED ✓'}
+                {goalComplete ? 'GOAL ACHIEVED ✓' : hasCompletedMove ? 'MOVE COMPLETE ✓' : 'NEXT MOVE NEEDED'}
               </Text>
               <Text style={{ color: '#D6D6D8', lineHeight: 22, fontSize: 14 }}>
                 {goalComplete
                   ? 'This goal is recorded as completed.'
-                  : 'The last action is finished, but your milestone and goal are not automatically complete. Review your milestone below before deciding what comes next.'}
+                  : readyToReviewMilestone
+                    ? `The planned actions for "${readyToReviewMilestone.title}" are finished. Only you can say whether the milestone has been achieved.`
+                    : hasCompletedMove
+                      ? 'That Move is finished. Your milestone and goal remain in progress until you confirm the outcome.'
+                      : 'Your Path is still in progress. Choose a useful next action when you are ready.'}
               </Text>
-              {!goalComplete && milestones.some((m) => m.status === 'active') ? (
+              {!goalComplete && readyToReviewMilestone && !reviewDeferred ? (
+                <View style={{ marginTop: 12, gap: 10 }}>
+                  <Text style={{ color: '#D8B24A', fontWeight: '900', fontSize: 12, letterSpacing: 1 }}>
+                    YOUR NEXT DECISION
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Review milestone: ${readyToReviewMilestone.title}`}
+                    onPress={() => requestMilestoneReview(readyToReviewMilestone)}
+                    style={{ backgroundColor: '#D8B24A', paddingVertical: 15, borderRadius: 12, alignItems: 'center' }}>
+                    <Text style={{ color: '#0B0B0B', fontWeight: '900', fontSize: 14 }}>
+                      REVIEW MILESTONE →
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setReviewDeferredMilestoneId(readyToReviewMilestone.id)}
+                    style={{ paddingVertical: 11, alignItems: 'center' }}>
+                    <Text style={{ color: '#D8B24A', fontWeight: '800', fontSize: 12 }}>
+                      NOT THERE YET — KEEP WORKING
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : !goalComplete && milestones.some((m) => m.status === 'active') ? (
                 <View style={{ marginTop: 8, gap: 12 }}>
                   <Text style={{ color: '#D8B24A', fontWeight: '900' }}>CONTINUE THIS MILESTONE</Text>
                   <Text style={{ color: '#C7C7C7', fontSize: 13, lineHeight: 19 }}>
-                    Finished an action, not the milestone. Ask the Coach to suggest another move based on your recorded progress, or write one yourself.
+                    {hasCompletedMove
+                      ? 'Your milestone is still in progress. The Coach can suggest one useful Move based on what you have done, or you can write your own.'
+                      : 'Your milestone needs a first Move. Ask the Coach for a useful action, or write one yourself.'}
                   </Text>
+                  {reviewDeferred && readyToReviewMilestone ? (
+                    <Pressable accessibilityRole="button" onPress={() => requestMilestoneReview(readyToReviewMilestone)}
+                      style={{ paddingVertical: 7, alignItems: 'center' }}>
+                      <Text style={{ color: '#D8B24A', fontSize: 12, fontWeight: '800' }}>REVIEW MILESTONE INSTEAD →</Text>
+                    </Pressable>
+                  ) : null}
                   <TextInput
                     value={continuationNote}
                     onChangeText={setContinuationNote}
@@ -3137,26 +3326,21 @@ setAdaptedMove({
     >
       YOUR PATH
     </Text>
+    <Pressable onPress={() => void changeAutoRoutine()} disabled={changingAutoRoutine}
+      accessibilityRole="switch" accessibilityState={{ checked: autoRoutine, disabled: changingAutoRoutine }}
+      style={{ borderWidth: 1, borderColor: '#54462B', borderRadius: 11, padding: 12, marginBottom: 16 }}>
+      <Text style={{ color: '#F0D06A', fontSize: 12, fontWeight: '800' }}>
+        {autoRoutine ? '☑' : '☐'} COACH PREPARES ROUTINE NEXT MOVES
+      </Text>
+      <Text style={{ color: '#B7B7B7', fontSize: 12, marginTop: 4, lineHeight: 17 }}>
+        {autoRoutine ? 'On · the next ordinary action can be ready before your scheduled session.' : 'Off · you choose when to request another action.'}
+        {' '}The Coach never changes your schedule or starts a tool automatically.
+      </Text>
+    </Pressable>
 
     {milestones.map((milestone, index) => {
       const isCurrent = milestone.status === 'active';
-      const isReadyToConfirm =
-  isCurrent &&
-  actions.some(
-    (action) => action.milestone_id === milestone.id
-  ) &&
-  !actions.some(
-    (action) =>
-      action.milestone_id === milestone.id &&
-      action.status !== 'completed'
-  ) &&
-  (
-    nextPending?.milestone_id !== milestone.id ||
-    (
-      displayedMoveSteps.length > 0 &&
-      unfinishedDisplayedSteps.length === 0
-    )
-  );
+      const isReadyToConfirm = milestone.id === readyToReviewMilestone?.id;
       const isLast = index === milestones.length - 1;
 
       return (
@@ -3326,30 +3510,8 @@ backgroundColor:
 ) : null}
 {isReadyToConfirm ? (
   <Pressable
-    onPress={() => {
-      Alert.alert(
-        'Milestone review',
-        `Have you actually achieved "${milestone.title}"? Checking off the planned actions does not necessarily mean this milestone is complete.`,
-        [
-          { text: 'Not yet', style: 'cancel' },
-          {
-            text: 'Yes, achieved',
-            onPress: async () => {
-              try {
-                await confirmMilestone(milestone.id);
-                setRefreshKey((current) => current + 1);
-                setShowMilestoneConfirmed(true);
-              } catch (error: any) {
-                Alert.alert(
-                  'Could not confirm milestone',
-                  error?.message ?? 'Please try again.'
-                );
-              }
-            },
-          },
-        ]
-      );
-    }}
+    onPress={() => requestMilestoneReview(milestone)}
+    accessibilityRole="button"
     style={{
       marginTop: 12,
       paddingVertical: 14,
@@ -3366,7 +3528,7 @@ backgroundColor:
         fontWeight: '900',
       }}
     >
-      CONFIRM MILESTONE ✓
+      REVIEW MILESTONE →
     </Text>
   </Pressable>
 ) : null}
@@ -3433,9 +3595,9 @@ backgroundColor:
       <Pressable
         onPress={() => {
           setShowMilestoneConfirmed(false);
-          // The database decides whether another planned milestone exists.
-          // If not, prepare a proposal; never add anything without approval.
-          if (!goalComplete) void suggestNextMilestones();
+          // A next milestone is already prepared when one exists. If this was
+          // the last milestone, the Goal screen offers an intentional next step.
+          setRefreshKey((current) => current + 1);
         }}
         style={{
           backgroundColor: '#D4AF37',
@@ -3447,7 +3609,7 @@ backgroundColor:
         }}
       >
         <Text style={{ color: '#111111', fontWeight: '900' }}>
-          CONTINUE MY PATH
+          SEE WHAT'S NEXT →
         </Text>
       </Pressable>
     </View>

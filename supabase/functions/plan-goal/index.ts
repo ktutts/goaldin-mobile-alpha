@@ -119,6 +119,10 @@ function normalizeAIResponse(raw: unknown, title: string, outcome: string): Reco
   }
 
   if (!Array.isArray(plan.milestones) || plan.milestones.length === 0) return null;
+  // A finite plan must explicitly attest that its final milestone reaches the goal.
+  // This is a safeguard, not independent proof of semantic completeness.
+  const isOngoing = String(plan.horizon ?? '').toLowerCase() === 'ongoing';
+  if (!isOngoing && plan.pathReachesOutcome !== true) return null;
   const milestones = [];
   for (const item of plan.milestones) {
     if (!item || typeof item !== 'object') return null;
@@ -157,6 +161,7 @@ function normalizeAIResponse(raw: unknown, title: string, outcome: string): Reco
     clarificationQuestion: null,
     clarificationOptions: [],
     milestones,
+    planStatus: isOngoing ? 'ongoing_path' : 'complete_path',
     firstMove: milestones[0].nextMove,
     coachMessage: typeof plan.coachMessage === 'string' ? plan.coachMessage : null,
   };
@@ -169,6 +174,7 @@ async function buildAIPlan(input: {
   deadline: string | null;
   schedule: string;
   whenContext: string;
+  reviewFeedback?: string;
 }) {
   try {
     const systemPrompt = `You are GOAL'D IN's executive strategy coach.
@@ -196,6 +202,20 @@ Choose a realistic planning horizon:
 Do not inflate simple tasks into complicated plans.
 Do not compress major life changes into unrealistic deadlines.
 A deadline is a constraint, not proof that the goal can be completed by then.
+COMPLETE PATH REQUIREMENT:
+For a finite goal, plan backward from the user's actual desired outcome.
+
+The final milestone must represent achieving that outcome, not merely preparing for it, practicing toward it, or making partial progress.
+
+Include enough meaningful intermediate milestones to make the journey realistic from the user's starting point. Do not add milestones simply to reach a particular number.
+
+A milestone is an earned capability or tangible accomplishment. A Next Move is one practical action toward that milestone.
+
+For example, learning a complete guitar song must eventually lead to playing the entire song, not stop at learning chords. Restoring a vehicle must lead to the intended finished condition, not stop at buying parts.
+
+Keep the full Path available in the Journey, but focus the user on only the CURRENT MOVE they can act on now.
+
+Never mark a milestone or goal complete automatically. The user confirms achievement.
 
 For ongoing goals, emphasize repeatable actions, consistency, and meaningful progress rather than a final 100% completion.
 
@@ -276,6 +296,27 @@ OUTPUT COMPATIBILITY:
 - Keep firstMove identical in substance to the first milestone's nextMove.
 - Keep estimates reasonable when useful. Do not make all actions 15-minute tasks or imply that lengthy real-world work should be rushed.
 - Return ONE valid JSON object only.
+- Include pathReachesOutcome (boolean). For finite goals, set it true only if the FINAL milestone achieves the stated outcome; otherwise revise the plan. For ongoing practices, use a sustainable repeatable path.
+- Verify the final milestone against the user's goal, not merely the first Next Move. Learning chords alone does not complete a goal to perform an entire song.
+- Never present a starter plan as a finished Journey.
+GOALDIN-REAL-MILESTONES-V1:
+- For finite goals, build the COMPLETE Path from the user's current starting point through the final stated outcome. Normally use 3-5 meaningful milestones, adjusting the number to the goal's complexity. Never stop at the first achievement when the user's goal clearly requires additional achievements.
+- The final milestone must demonstrate the user's actual desired outcome, not merely preparation or partial progress.
+- Before returning the plan, verify that completing all milestones would reasonably fulfill the original goal. If not, revise the Path.
+- PROGRESSION QUALITY: Plan backward from the finish line, then check every transition forward. Do not jump from a beginner foundation directly to a complex final performance, project completion, race, or launch when important intermediate capabilities are missing.
+- Include the essential bridge achievements needed for THIS goal and THIS user's stated experience. A milestone must be a verifiable accomplishment, not merely "start learning" or a routine practice session.
+- For learning a complete song, consider the actual musical sections, rhythm/technique, transitions, and any solo or difficult passage that is part of the user's intended arrangement. A beginner may need separate achievements for difficult sections, combining sections, and a full run-through; an experienced musician may need fewer. Do not invent precise notes, chords, lyrics, or tabs when uncertain.
+- For running, building, repairs, business, or any other domain, apply the same missing-bridge test using domain-appropriate prerequisites, safety, available resources, and the user's commitments. Do not force a standard milestone count or pretend to know the user's baseline.
+- If baseline experience is unknown, use a sensible adaptable starting Move and a realistic progression; ask one clarification only when essential. Never assume the user is a beginner or expert.
+- Before returning, ask: Could a person with the stated starting ability reasonably move through each milestone to the next, without a major unexplained leap? If not, add or revise the missing meaningful milestones.
+- Do not create extra milestones just to reach a number. Simple goals may require only one meaningful milestone.
+- Milestones are EARNED CAPABILITIES or tangible accomplishments, not week numbers, a checklist count or one session.
+- Every milestone description starts with "Reached when:" followed by a safe, observable achievement. Do not require literal absence of every symptom to acknowledge progress.
+- A multiweek goal should preserve realistic progression between its starting ability and final outcome. For Couch-to-5K, model gradual run/walk training and rest, not Week 1 followed by the final race.
+- The nextMove within each milestone is the FIRST practical session or decision inside it, NOT the entire milestone or a vague task to plan the week.
+- Goal creation should schedule only the person's chosen WHEN commitments. Subsequent routine sessions are prepared as previous sessions complete, without adding dates, reminders or new milestones on their behalf.
+- Where experience, safety or available days materially affects feasibility, ask ONE useful question or offer a conservative initial assessment rather than inventing readiness.
+- The user confirms milestone achievement and separately confirms the actual final outcome.
 - Every milestone MUST contain a nextMove.
 - Every nextMove MUST contain a specific title, estimatedMinutes, whyThisMove, and actionable steps.
 - Never create a milestone without a nextMove.
@@ -291,7 +332,7 @@ Set needsClarification to true and provide clarificationQuestion plus 2-4 practi
 Do not ask when the goal and WHY already provide enough direction.
 Do not require clarification for simple or exploratory goals.
 If clarification is needed, do not invent a detailed Path before the user answers.
-Return exactly this structure:
+Return exactly this structure. The milestones array illustrates only ONE item; for multi-stage goals include ALL meaningful milestones required to reach the outcome. Make the weights total approximately 100:
 
 {
   "normalizedTitle": "Specific goal title",
@@ -299,12 +340,13 @@ Return exactly this structure:
   "horizon": "project",
   "planningMode": "milestones",
   "needsClarification": false,
+  "pathReachesOutcome": true,
   "clarificationQuestion": null,
   "clarificationOptions": [],
   "milestones": [
     {
-      "title": "Specific milestone",
-      "description": "What completing this stage accomplishes",
+      "title": "One meaningful milestone in the complete journey",
+      "description": "Reached when: the user has demonstrated a concrete, safe, observable achievement.",
       "weight": 100,
       "targetDate": null,
       "nextMove": {
@@ -341,6 +383,7 @@ Additional WHEN details (goal type, experience, event choice; user-provided):
 ${input.whenContext || "No additional WHEN details supplied"}
 
 Create a practical GOAL'D IN path for this goal. Use the chosen schedule rather than asking to choose it again.
+${input.reviewFeedback ? `INDEPENDENT REVIEW FOUND THE PREVIOUS PATH INCOMPLETE: ${input.reviewFeedback}. Revise the entire Path so the final milestone achieves the original goal. Do not merely claim it is complete.` : ''}
 `;
 const plan = await dispatchAIRequest(
   chooseModelRole("PLANNING"),
@@ -355,6 +398,36 @@ const plan = await dispatchAIRequest(
     return null; // Returning null allows local buildFirstMove() fallback
   }
 }
+// Independent outcome check: the planner's own pathReachesOutcome flag is not proof.
+// A second, narrow AI review checks the actual final milestone against the user's goal.
+async function reviewPathOutcome(
+  title: string,
+  outcome: string,
+  plan: Record<string, unknown>,
+  whenContext: string,
+): Promise<{ accepted: boolean; reason: string }> {
+  if (plan.needsClarification === true) return { accepted: true, reason: 'Clarification requested' };
+  if (String(plan.horizon ?? '').toLowerCase() === 'ongoing') return { accepted: true, reason: 'Ongoing practice' };
+  try {
+    const milestones = Array.isArray(plan.milestones) ? plan.milestones : [];
+    const review = await dispatchAIRequest(
+      chooseModelRole('PLANNING'),
+      `You are an independent GOAL'D IN Path reviewer. Judge the actual milestones against the goal and the user's supplied experience and schedule; ignore any self-reported completion flag. Check BOTH (1) outcome: the last milestone demonstrates the full intended result for a finite goal, and (2) progression: essential intermediate capabilities are not skipped by an implausible jump from the user's starting point to the finish. Do not demand a fixed number of milestones, invent a baseline, or reject a simple goal for being simple. For a complex song, consider the sections, transitions, and difficult passages of the intended arrangement, but do not invent exact musical notes or assume the user must learn a solo if they chose a simplified arrangement. For other goals apply equivalent domain-specific reasoning. Return only JSON: {"complete": boolean, "reason": "short, specific explanation of missing outcome or bridge milestone, if any"}. If there is a significant gap, set complete to false.`,
+      JSON.stringify({ goal: title, desiredOutcome: outcome || title, experienceAndConstraints: whenContext, milestones: milestones.map((m) => ({ title: m.title, description: m.description })) }),
+    );
+    const parsed = typeof review === 'string' ? JSON.parse(review) : review;
+    const result = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown> : null;
+    return {
+      accepted: result?.complete === true,
+      reason: typeof result?.reason === 'string' ? result.reason : 'Review did not confirm complete outcome',
+    };
+  } catch (error) {
+    console.log('Outcome review unavailable:', error);
+    return { accepted: false, reason: 'Outcome review unavailable' };
+  }
+}
+
 async function buildWhySuggestions(title: string): Promise<string[]> {
   const systemPrompt = `
 You are GOAL'D IN's WHY coach.
@@ -436,26 +509,29 @@ Deno.serve(async (req) => {
 }
 if (true) {
  
-let aiPlan = await buildAIPlan({
-  title,
-  target: outcome,
-  why,
-  deadline,
-  schedule,
-  whenContext,
-});
-
-if (!aiPlan) {
-  console.log("AI plan attempt 1 failed — retrying once.");
-
-  aiPlan = await buildAIPlan({
+let aiPlan: Record<string, unknown> | null = null;
+let reviewFeedback = '';
+for (let attempt = 1; attempt <= 2; attempt++) {
+  const candidate = await buildAIPlan({
     title,
     target: outcome,
     why,
     deadline,
     schedule,
     whenContext,
+    reviewFeedback,
   });
+  if (!candidate) {
+    console.log(`AI plan attempt ${attempt}: invalid response`);
+    continue;
+  }
+  const review = await reviewPathOutcome(title, outcome, candidate, whenContext);
+  if (review.accepted) {
+    aiPlan = candidate;
+    break;
+  }
+  reviewFeedback = review.reason;
+  console.log(`AI plan attempt ${attempt}: incomplete path — ${review.reason}`);
 }
 
 if (aiPlan) {
@@ -464,7 +540,7 @@ if (aiPlan) {
     headers: { "Content-Type": "application/json" },
   });
 }
-console.log("AI PLAN RESULT:", JSON.stringify(aiPlan));
+console.log("AI PLAN RESULT: no valid complete AI plan returned");
 console.log("AI planning failed twice — using local fallback.");
   
 }
@@ -652,10 +728,12 @@ const plan = {
   clarificationOptions: [],
 
   milestones: buildSmartMilestones(title, target, deadline),
+  planStatus: 'starter_fallback',
+  pathReachesOutcome: false,
 
   firstMove: buildFirstMove(title, target),
   coachMessage:
-  `We're starting with one clear move toward ${target || title}. Keep it simple, get the first win, then we'll build from there.`,
+  `The Coach couldn't build your complete personalized Path right now. Here's a starter plan toward ${target || title}; it is not your finished Journey. You can retry planning when the Coach is available.`,
 };
 
 return new Response(JSON.stringify(plan), {

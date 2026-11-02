@@ -15,6 +15,7 @@ import {
 } from 'expo-speech-recognition';
 import GoalTimePicker from '@/components/GoalTimePicker';
 import { supabase } from '@/lib/supabase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import GoalItButton from '@/components/GOALITBUTTON';
 import {
   buildMilestoneDrafts,
@@ -227,6 +228,7 @@ export default function GoalIt() {
   const [showGoalIdeas, setShowGoalIdeas] = useState(false);
   const [showScheduleBuilder, setShowScheduleBuilder] = useState(false);
   const [scheduleType, setScheduleType] = useState<'once' | 'repeat' | null>(null);
+  const [autoPrepareNextMove, setAutoPrepareNextMove] = useState(true);
   const [scheduleDays, setScheduleDays] = useState<{ day: number; times: string[] }[]>([]);
   const [activeScheduleDay, setActiveScheduleDay] = useState<number | null>(null);
   const [oneTimeDate, setOneTimeDate] = useState<Date | null>(null);
@@ -506,10 +508,27 @@ export default function GoalIt() {
           event_name: showTargetDate ? eventName.trim() || null : null,
           running_experience: runningGoal ? runningExperience : null,
           wants_beginner_plan: runningGoal ? wantsBeginnerPlan : null,
+          auto_prepare_routine: autoPrepareNextMove,
         },
       },
     });
 
+    // Allow routine preparation only because the user saw this choice in WHEN.
+    try {
+      await AsyncStorage.setItem(`goaldin-auto-prepare-${goal.id}`, String(autoPrepareNextMove));
+    } catch (saveError) { console.warn('Could not cache Coach setting; cloud event remains the source:', saveError); }
+
+    // goaldin-goal-it-ready-patch-v1
+    // Preserve WHEN locally as well as in the existing goal_created event. The
+    // TODAY screen then recognizes the user's commitments immediately.
+    const notificationIds = [];
+    if (scheduleType === 'repeat' && scheduleDays.length) {
+      try {
+        await AsyncStorage.setItem(`goal-schedule-${goal.id}`, JSON.stringify({
+          version: 2, dayTimes: scheduleDays, notificationIds: [],
+        }));
+      } catch (saveError) { console.warn('Could not cache new goal schedule:', saveError); }
+    }
     // Schedule the reminders chosen while creating this goal.
     if (scheduleType === 'repeat' && scheduleDays.length > 0) {
       const Notifications = await getNotifications();
@@ -522,11 +541,14 @@ export default function GoalIt() {
             for (const time of item.times) {
               const [hour, minute] = time.split(':').map(Number);
               try {
-                await Notifications.scheduleNotificationAsync({
+                const notificationId = await Notifications.scheduleNotificationAsync({
                   content: {
                     title: `GOAL'D IN — ${cleanTitle}`,
-                    body: firstMove.title || `Time to make progress on ${cleanTitle}.`,
+                    // Resolve the latest move when the reminder is tapped;
+                    // don't freeze the first action's title forever.
+                    body: 'Your Next Move is ready when you are.',
                     sound: true,
+                    data: { goalId: goal.id, source: 'goal-schedule' },
                   },
                   trigger: {
                     type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
@@ -535,6 +557,7 @@ export default function GoalIt() {
                     minute,
                   },
                 });
+                notificationIds.push(notificationId);
               } catch (notifyError) {
                 console.warn('Could not schedule a reminder:', notifyError);
               }
@@ -542,6 +565,15 @@ export default function GoalIt() {
           }
         }
       }
+    }
+
+    // Keep notification IDs so future schedule edits can cancel old reminders.
+    if (scheduleType === 'repeat' && scheduleDays.length) {
+      try {
+        await AsyncStorage.setItem(`goal-schedule-${goal.id}`, JSON.stringify({
+          version: 2, dayTimes: scheduleDays, notificationIds,
+        }));
+      } catch (saveError) { console.warn('Could not preserve reminder IDs:', saveError); }
     }
 
     setTitle('');
@@ -553,6 +585,7 @@ export default function GoalIt() {
     setEventName('');
     setRunningExperience('unsure');
     setWantsBeginnerPlan(false);
+    setAutoPrepareNextMove(true);
     setScheduleType(null);
     setScheduleDays([]);
     setOneTimeDate(null);
@@ -561,7 +594,7 @@ export default function GoalIt() {
 
     setTimeout(() => {
       setShowSuccess(false);
-      router.replace('/today');
+      router.replace(`/goal/${goal.id}`);
     }, 700);
   }
 
@@ -1049,6 +1082,17 @@ void getWhySuggestions(title.trim())
               style={[s.input, { minHeight: 56, height: 56, paddingVertical: 12 }]}
             />
 
+            <Pressable onPress={() => setAutoPrepareNextMove((current) => !current)}
+              accessibilityRole="checkbox" accessibilityState={{ checked: autoPrepareNextMove }}
+              style={{ borderWidth: 1, borderColor: '#64512C', borderRadius: 12, padding: 13, marginTop: 16 }}>
+              <Text style={{ color: '#E9C369', fontWeight: '800', fontSize: 12 }}>
+                {autoPrepareNextMove ? '☑' : '☐'} KEEP MY NEXT MOVE READY
+              </Text>
+              <Text style={{ color: '#BDBDBD', lineHeight: 18, fontSize: 12, marginTop: 4 }}>
+                After each session, the Coach can prepare a safe, ordinary next step inside my Path.
+                I choose when to start. No schedule or reminder changes without my approval.
+              </Text>
+            </Pressable>
             <View style={{ marginTop: 20 }}>
               <GoalItButton onPress={create} disabled={saving} loading={saving} />
             </View>

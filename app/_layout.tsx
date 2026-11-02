@@ -1,6 +1,6 @@
 import { Stack, router, usePathname, useRootNavigationState } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
   AppState,
@@ -10,8 +10,8 @@ import {
   View,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import * as Notifications from 'expo-notifications';
 import Svg, { Circle, Defs, Line, RadialGradient, Stop } from 'react-native-svg';
+import { useGoalReminderNavigation } from '@/lib/goalReminderNavigation';
 
 /**
  * GOAL'D IN opening: navigation shell ready -> 100% -> full gold crown ->
@@ -145,6 +145,7 @@ function OpeningCinematic({ navigationReady, onDone }: OpeningProps) {
       if (finished.current) return;
       // The 100% state is held visibly BEFORE the crown appears.
       setCrownShown(true);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
       Animated.parallel([
         Animated.timing(crownOpacity, { toValue: 1, duration: 290, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
         Animated.spring(crownScale, { toValue: 1, friction: 7, tension: 70, useNativeDriver: true }),
@@ -152,16 +153,15 @@ function OpeningCinematic({ navigationReady, onDone }: OpeningProps) {
         Animated.timing(glowScale, { toValue: 1.05, duration: 290, useNativeDriver: true }),
       ]).start(({ finished: shown }) => {
         if (!shown || finished.current) return;
-        // The only haptic is synchronized to the crown's outgoing light pulse.
-        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+        // The one haptic already fired as the crown appeared.
         Animated.timing(progressOpacity, { toValue: 0.15, duration: 160, useNativeDriver: true }).start();
 
         Animated.parallel([
           Animated.sequence([
-            Animated.timing(burstOpacity, { toValue: 1, duration: 90, useNativeDriver: true }),
-            Animated.timing(burstOpacity, { toValue: 0, duration: 610, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+            Animated.timing(burstOpacity, { toValue: 1, duration: 75, useNativeDriver: true }),
+            Animated.timing(burstOpacity, { toValue: 0, duration: 1030, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
           ]),
-          Animated.timing(burstScale, { toValue: 2.35, duration: 700, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+          Animated.timing(burstScale, { toValue: 10, duration: 1050, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
           Animated.sequence([
             Animated.timing(raysOpacity, { toValue: 0.85, duration: 100, useNativeDriver: true }),
             Animated.timing(raysOpacity, { toValue: 0, duration: 530, useNativeDriver: true }),
@@ -279,17 +279,10 @@ export default function Layout() {
   const [showOpening, setShowOpening] = useState(true);
   const [openingKey, setOpeningKey] = useState(0);
 
-  // A notification must open its specific goal, not send someone to YOU.
-  useEffect(() => {
-    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-      const goalId = response.notification.request.content.data?.goalId;
-      if (goalId) {
-        setShowOpening(false);
-        router.push(`/goal/${goalId}`);
-      }
-    });
-    return () => sub.remove();
-  }, []);
+  // All goal reminders resolve to the latest Next Move, including cold starts.
+  // Keep this as the ONLY response listener for goal reminders.
+  const handleReminderOpen = useCallback(() => setShowOpening(false), []);
+  useGoalReminderNavigation({navigationReady, onOpenReminder: handleReminderOpen});
 
   // Preload YOU under the overlay so the final fade reveals meaningful content.
   // Do not change a direct goal link, a milestone session or an auth screen.
