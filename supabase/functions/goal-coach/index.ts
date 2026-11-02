@@ -228,8 +228,20 @@ function programQualityIssues(program: ProgramProposal, goalKind?: 'finite' | 'o
     }
   }
   if (goalKind === 'finite' && /\b(?:5\s?k|five.kilomet(?:er|re)|five.kilomet(?:er|re)s)\b/i.test(goalTitle)) {
-    const forward = program.phases.some((phase) => /\b(?:5\s?k|5.kilomet(?:er|re)|race day|finish line)\b/i.test(`${phase.title} ${phase.description}`));
-    if (!forward) issues.push('The Path stops before the actual 5K finish line. Include a conditional final 5K milestone, never imply it is already achieved.');
+    const lastTitle = program.phases[program.phases.length - 1]?.title ?? '';
+    const forward = /\b(?:complete|finish|run|race|achieve)\b.{0,35}\b5\s?k\b|\b5\s?k\b.{0,35}\b(?:finish|complete|race|run)\b/i.test(lastTitle);
+    if (!forward) issues.push('The FINAL milestone must be the real 5K finish-line outcome, conditional on user confirmation.');
+  }
+  if (goalKind === 'finite') {
+    for (const [index, phase] of program.phases.entries()) {
+      if (index === program.phases.length - 1) continue;
+      if (/^(?:begin|complete)\s+week\s*\d+|^(?:week|phase|stage)\s*\d+\b|^(?:assess|evaluate|review)\b/i.test(phase.title.trim())) {
+        issues.push(`"${phase.title}" is a calendar or administrative checkpoint, not a meaningful achievement. Name the ability/result that the user's accumulated actions must achieve.`);
+      }
+      if (!/\breached when\s*:/i.test(phase.description)) {
+        issues.push(`"${phase.title}" needs an observable 'Reached when:' criterion in its description.`);
+      }
+    }
   }
   const first = program.phases[0];
   if (first && kneeReadiness === 'better' &&
@@ -263,8 +275,8 @@ function applyProgramGuardrails(program: ProgramProposal, request: ProgramReques
       phases[0] = {
         title: 'Check readiness for the next session',
         description: readiness === 'better'
-          ? 'Your knee feels better now. Choose the next appropriate step without assuming you must book a visit or that running is automatically safe.'
-          : 'Your current knee comfort is uncertain or still troublesome. Resolve that question before planning a running session.',
+          ? 'Your knee feels better now. Choose the next appropriate step without assuming you must book a visit or that running is automatically safe. Reached when: the person has decided they can safely attempt an easy session or will defer it.'
+          : 'Your current knee comfort is uncertain or still troublesome. Resolve that question before planning a running session. Reached when: the person confirms an appropriate safe plan for training or chooses to postpone.',
         moves: [{
           title: 'Decide the next safe step for training', minutes: null,
           steps: [
@@ -276,22 +288,8 @@ function applyProgramGuardrails(program: ProgramProposal, request: ProgramReques
       };
     }
   }
-  const finite5k = request.goalKind === 'finite' && /\b(5\s?k|five.kilomet(?:er|re)s?)\b/i.test(request.goalTitle);
-  if (finite5k && !phases.some(phase =>
-      /\b(?:run|complete|finish|race|achieve)\b.{0,35}\b5\s?k\b|\b5\s?k\b.{0,35}\b(?:finish|complete|race|day)\b/i.test(phase.title))) {
-    phases.push({
-      title: 'Complete my first 5K',
-      description: 'The real finish line. Attempt the distance only when ready; a completed training week is not the outcome.',
-      moves: [{
-        title: 'Complete a 5K when ready', minutes: null,
-        steps: [
-          'When ready, choose an appropriate 5K event or a self-directed 5K route.',
-          'Complete the 5K at an appropriate pace, or record what happened and adapt the Path if the attempt is unfinished.',
-          'Confirm the actual goal outcome separately after achieving it.',
-        ],
-      }],
-    });
-  }
+  // Do not manufacture a finish-line stage after a truncated or incomplete
+  // plan. The quality check will ask for a complete proposal or reject it.
   return { ...program, phases };
 }
 
@@ -304,8 +302,18 @@ If the user reports injury, pain, or health symptoms, do not prescribe treatment
 Build a REAL, actionable, staged program to satisfy the USER'S REQUEST, not a motivational paragraph about what a plan could be. The user may ask for Couch to 5K, weekly social time, business launch, guitar practice, restoration, or any other reasonable domain.
 Honor the stated goal, current milestone, known progress, decisions, blockers and schedule. Never repeat already completed work. Differentiate a FINITE outcome (e.g. completing a 5K) from ONGOING practice (e.g. weekly dates). A repeating training session is not proof that a 5K goal is complete.
 
-Use 2-5 purposeful MILESTONES (phases), each with 1-4 clearly ordered Next Moves (prefer 1-2 for the immediate stage), each with 1-5 concrete steps. A milestone marks an actual stage of advancement, not an administrative category like 'Program Phase' or 'Progress Evaluation Phase'. Each Next Move must be ONE achievable session or decision that can be recorded separately. A title like 'Start a modified Couch-to-5K plan (Weeks 1-2)' is NOT one move: split it into 'Review readiness for session 1', 'Complete training session 1', 'Complete session 2' only when those sessions are appropriate. Never group weeks or several scheduled days into one Move. Make symptom tracking and progress reporting supporting steps in each session, not independent milestones unless that is genuinely the objective. Avoid busywork, vague 'follow advice' tasks, or appointments imposed solely because past pain was mentioned. Keep early actions executable now and future actions clearly conditional; preserve the user's chosen days.
-For a finite 5K goal the FINAL phase title must explicitly be 'Complete my first 5K' (or equivalent actual finish-line outcome), not merely 'Weeks 4-9' or 'Evaluate progress'. For FINITE goals, the proposed journey should point toward the real finish line, not stop at a progress review or one week of training. Include a meaningful future outcome milestone when appropriate, clearly distinguishing preparation from achievement. NEVER claim that adding or checking that milestone proves the goal accomplished: explicit outcome confirmation remains separate. For ONGOING practice, propose only the next meaningful occurrence and useful preparation, with no artificial finish line.
+Create a compact OVERVIEW of 3-5 OUTCOME-BASED MILESTONES for a finite goal (1 meaningful upcoming occurrence for an ongoing practice). The overview is NOT a fixed limit on how many DAYS, SESSIONS or Next Moves the goal will take. Each milestone must be a genuinely significant achievement built through accumulated actions, not a week number, generic stage, session count, readiness form or progress review. For every milestone DESCRIPTION say what demonstrable accomplishment will prove it was reached, phrased as "Reached when: ...". A person may need dozens of sessions or many months to reach one milestone. Do not declare or imply it has been met because its initially listed Next Moves are checked.
+
+Include 1-3 REAL, ORDERED Next Moves for the current milestone and at most 1 conditional starter move in each future milestone. The app will propose additional Next Moves as needed from actual recorded progress, WITHOUT changing the milestone or marking it completed; do not squeeze all the needed work into the initial 1-3 moves. Each move must be one doable session or decision, not weeks of work. A knee check or activity reflection belongs in the workout's supporting steps when appropriate, NOT a standalone milestone. Do not require users to repeatedly document information they already gave.
+
+For a beginner Couch-to-5K, the full journey should account for a gradual walk/run progression, sustained running/endurance, readiness to cover the full distance, and finally the user's real 5K. The source-backed standard NHS program is nine weeks with three runs and rest days between; a person with fewer days or setbacks may need LONGER. Do NOT jump from one or two introductory sessions straight to the finish line. Example achievement-oriented milestone titles: 'Complete comfortable introductory run/walk sessions', 'Run continuously for a meaningful duration', 'Build toward the full 5K distance', 'Complete my first 5K'. The exact achievements and durations depend on the person's starting experience, progress and available days. Future training is conditional on comfort, recovery and actual readiness. If a milestone is far away, its first move may be preparation, not an unsafe immediate workout. Every move must be one real session; do not hide several weeks in a single step.
+
+For a restoration, milestone achievements may be structural repairs finished, drivetrain running reliably, or bodywork ready for primer. For guitar/language, milestones should demonstrate ability (play a complete song, hold a conversation), not simply 'practice for seven days'. The same logic applies to all domains.
+
+For a FINITE goal, the FINAL milestone refers to the user's actual outcome. For a finite 5K goal title it 'Complete my first 5K' or an equivalent real finish line; keep it conditional until the user confirms the real outcome. A completed workout, milestone checklist, estimated timeline or Coach inference NEVER completes the goal. For ONGOING practice, no artificial finish line.
+
+For a precisely timed workout, give steps in an executable, timer-readable form. Example: 'Warm up for 5 minutes with walking'; 'Run for 1 minute, walk for 1.5 minutes, repeat for 20 minutes'; 'Cool down for 5 minutes with walking'. Never invent a total if intervals are inconsistent. Smart Tools and optional heart-rate hardware must be PREPARED but never started, recorded or connected without user permission. A reminder opens the relevant Next Move; the person explicitly presses Start to begin the timer and recording. Never claim a heart-rate monitor is connected or live if its status was not supplied.
+
 Do not make the user manage many forms. If exactly one missing fact changes what is safe or possible, ask one relevant question in the summary or use the answer passed in CURRENT USER UPDATE. Make the next session or preparation task actionable. A brief helpful Coach message is better than verbose generic advice.
 
 COACH ON SCHEDULE: Compare the person's CHOSEN days with SOURCE-SUPPORTED typical frequencies when a source is provided. Point out a useful optional change (e.g. an additional day with recovery between sessions) and the tradeoff if they keep their current days. When a blocker such as knee pain is active, do not urge an extra workout or return to painful activity. Ask about readiness or suggest appropriate assessment. Keep the existing schedule unchanged unless the user explicitly approves an edit. Do not assert that an event, reservation, reminder, calendar change or Circle invitation occurred.
@@ -324,7 +332,7 @@ JSON:
   "estimatedWeeks":9,
   "scheduleAdvice":{"headline":"Optional schedule recommendation","explanation":"Why the chosen schedule fits or differs from the referenced approach, or tentative reasoning without sources","optionalChange":"An optional change the user may consider; never claim it was made"},
   "phases":[
-    {"title":"Specific phase name","description":"What the phase accomplishes","moves":[
+    {"title":"Specific phase name","description":"Reached when: the user demonstrates a specific, observable achievement appropriate to this milestone, confirmed through recorded progress or user confirmation","moves":[
       {"title":"One practical session/action","minutes":null,"steps":["First actionable step","Second actionable step"]}
     ]}
   ]
@@ -334,6 +342,159 @@ Use null for unknown/irrelevant estimatedWeeks or minutes; do not invent duratio
 Deno.serve(async (req) => {
   try {
     const input = (await req.json()) as CoachRequest & Partial<ProgramRequest>;
+    if ((input as any)?.mode === 'discovery-followup') {
+      const request = input as any;
+      const clean = (value: unknown, limit = 500) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
+      const title = clean(request.title, 160);
+      const idea = clean(request.idea, 900);
+      const question = clean(request.question, 700);
+      if (!title || !idea || !question) return new Response(JSON.stringify({ error: 'Discovery and a question are required.' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+      const experience = request.experience && typeof request.experience === 'object' ? {
+        invitation: clean(request.experience.invitation, 400),
+        tools: Array.isArray(request.experience.tools) ? request.experience.tools.slice(0, 6).map((x: unknown) => clean(x, 200)) : [],
+        steps: Array.isArray(request.experience.steps) ? request.experience.steps.slice(0, 6).map((x: unknown) => clean(x, 320)) : [],
+        safetyNote: clean(request.experience.safetyNote, 400),
+      } : {};
+      const history = Array.isArray(request.history) ? request.history.slice(-5).map((turn: any) => ({
+        question: clean(turn?.question, 500), answer: clean(turn?.answer, 1200),
+      })) : [];
+      const prompt = `You are GOAL'D IN's Discovery Coach helping a user explore and DO something real, not necessarily create a goal. Respond directly to the user's latest question, preserving context from the original Discovery, prepared experience, and conversation. The user may request examples, practical alternatives, material substitutions, a recipe, specific instructions, explanations, resources, or simply want to share progress. Do not force every request into blocker troubleshooting or restart the activity. Answer in 2-5 short sentences unless the user explicitly asks for detailed steps. Do not repeat the original instructions. If asked for an example, describe one concrete example and supply a focused resourceSearch phrase. If asked for a video or picture, prioritize a focused resourceSearch phrase so the app can open tappable search results; do not claim you verified the results. Be concrete and concise, offer one useful next action when appropriate, and ask at most one necessary clarifying question. If the user asks for a resource, give an accurate named resource only when confident it exists; do not fabricate URLs, citations, songs, events, scientific evidence, or claim live browsing. The resourceSearch field can hold a precise search phrase, clearly not a verified link. When a project supports weight or has structural safety implications, do not recommend glue or decorative hardware as reliable load-bearing substitutes. Respect safety for cooking, exercise, tools and contact with other people. Never record wins or change goals without explicit user action. Return ONLY JSON: {"answer":"helpful conversational answer with specific actionable information", "resourceSearch":"optional search phrase or empty string"}.`;
+      const raw: any = await dispatchAIRequest(chooseModelRole('COACHING'), prompt, JSON.stringify({ title, idea, category: clean(request.category, 30), experience, history, question }));
+      let parsed: any = raw;
+      if (typeof parsed === 'string') { try { parsed = JSON.parse(parsed); } catch { parsed = { answer: parsed }; } }
+      parsed = parsed?.reply ?? parsed;
+      const answer = clean(parsed?.answer, 2000);
+      if (!answer) return new Response(JSON.stringify({ error: 'Coach could not answer. Try again.' }), { status: 422, headers: { 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ reply: { answer, resourceSearch: clean(parsed?.resourceSearch, 220) } }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    if ((input as any)?.mode === 'discovery-experience') {
+      const request = input as any;
+      const clean = (v: unknown, n = 300) => typeof v === 'string' ? v.trim().slice(0, n) : '';
+      const title = clean(request.title, 160);
+      const idea = clean(request.idea, 900);
+      const blocker = clean(request.blocker, 300);
+      if (!title || !idea) return new Response(JSON.stringify({ error: 'A discovery is required.' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+      const prompt = `You are GOAL'D IN's practical Discovery Coach. The user chose TRY THIS, not MAKE IT A GOAL. Help them actually experience, learn, connect, move or create something NOW, without making a formal goal or inventing a schedule. Supply a useful specific mini-lesson, recipe steps, technique, or practical experience based on the idea. If a blocker is supplied, adapt to available resources; never assume the user owns equipment. Avoid hazardous instructions; for physical activities give sensible safety precautions and accessible alternatives. For named songs or scientific claims do not invent facts: if unsure, say to verify. Never invent URLs, local events, sources or search results. resourceSearch is a descriptive search phrase, NOT a verified link. Never imply you searched the web. Suggest a genuine win only if the person really attempts, learns, connects or accomplishes something. Return ONLY JSON: {"invitation":"brief motivating intro","steps":["specific practical step", "next practical step", "last step"],"tools":["actual tools or ingredients needed, with alternatives"],"safetyNote":"brief applicable safety consideration, or empty string","resourceSearch":"specific phrase for user to search for a lesson or resource","suggestedWin":"optional example of what a genuine win might be, not a claim the user completed it"}. Keep 3-6 steps and 0-6 tools, concise and usable.`;
+      const raw: any = await dispatchAIRequest(chooseModelRole('COACHING'), prompt, JSON.stringify({ title, idea, blocker, category: clean(request.category, 30) }));
+      let parsed: any = raw;
+      if (typeof parsed === 'string') { try { parsed = JSON.parse(parsed); } catch { parsed = null; } }
+      parsed = parsed?.experience ?? parsed;
+      const list = (v: any, max: number) => Array.isArray(v) ? v.slice(0, max).map((x: unknown) => clean(x, 320)).filter(Boolean) : [];
+      const steps = list(parsed?.steps, 6);
+      if (!steps.length) return new Response(JSON.stringify({ error: 'Coach could not prepare practical steps. Try again.' }), { status: 422, headers: { 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ experience: { invitation: clean(parsed?.invitation, 400), steps,
+        tools: list(parsed?.tools, 6), safetyNote: clean(parsed?.safetyNote, 400),
+        resourceSearch: clean(parsed?.resourceSearch, 200), suggestedWin: clean(parsed?.suggestedWin, 180) } }),
+        { headers: { 'Content-Type': 'application/json' } });
+    }
+    if ((input as any)?.mode === 'discovery') {
+      // Discovery suggests possibilities only. It never creates or edits goals,
+      // actions, schedules, Circle relationships, or progress records.
+      const data = input as any;
+      const clean = (v: unknown, limit = 160) =>
+        typeof v === 'string' ? v.trim().slice(0, limit) : '';
+      const list = (v: unknown, max = 8) => Array.isArray(v)
+        ? v.slice(0, max).map((x: unknown) => clean(x, 180)).filter(Boolean) : [];
+      const goals = Array.isArray(data.activeGoals) ? data.activeGoals.slice(0, 8).map((g: any) => ({
+        title: clean(g?.title, 120), milestone: clean(g?.milestone, 120),
+        progress: clean(g?.progress, 180),
+      })).filter((g: any) => g.title) : [];
+      const achievements = list(data.achievements, 8);
+      const interests = list(data.interests, 12);
+      const previous = list(data.recentDiscoveries, 18);
+      const recentCategories = list(data.recentCategories, 10);
+      const avoidTopics = list(data.avoidTopics, 8);
+      const direction = clean(data.direction, 32).toUpperCase();
+      const allowed = ['BUILD', 'GO', 'LEARN', 'FIX', 'PUSH', 'HELP', 'CONNECT', 'MOVE', 'DO'];
+      const context = {
+        activeGoals: goals, achievements, interests,
+        direction: allowed.includes(direction) ? direction : null,
+        recentDiscoveries: previous, recentCategories, avoidTopics,
+        freshExperience: data.freshExperience === true,
+        availableTime: clean(data.availableTime, 40) || null,
+        userRequest: clean(data.userMessage, 280) || null,
+      };
+      if (!goals.length && !achievements.length && !interests.length && !context.direction && !context.userRequest) {
+        return new Response(JSON.stringify({error: 'Provide an interest, goal, achievement, direction, or request for discovery.'}),
+          {status: 400, headers: {'Content-Type': 'application/json'}});
+      }
+      // The selected direction is a hard requirement, not just a display label.
+      // These definitions also give the model a clear boundary between GO and HELP/BUILD.
+      const directionRules: Record<string, string> = {
+        BUILD: 'MAKE OR IMPROVE a tangible thing. Propose a small creation, repair, design, recipe, or improvement the person can try. Do not substitute an event to organize.',
+        GO: 'GO SOMEWHERE NEW. Suggest a visit, outing, destination TYPE, walkable exploration, or experience at a different place. The person should be able to GO there, not organize, host, coordinate, or run an event. Without verified location data, suggest a place TYPE and how to find one; never invent a named local venue.',
+        LEARN: 'LEARN something specific. Offer a concrete question, skill, experiment, or short lesson with a first way to explore it.',
+        FIX: 'FIX or improve a specific everyday problem, object, or process with a realistic first step.',
+        PUSH: 'TRY a safe, achievable stretch or challenge. Keep it voluntary, specific, and adaptable.',
+        HELP: 'HELP someone or contribute meaningfully. Start with an achievable, consent-respecting action; do not assume another person needs help.',
+        CONNECT: 'CONNECT with another person or community through a realistic invitation or shared activity; do not assume someone has agreed.',
+        MOVE: 'MOVE the body through accessible, safe physical activity, not a construction project or an event to organize.',
+        DO: 'DO one specific, worthwhile real-world experience that can be tried soon.',
+      };
+      const directionRule = context.direction ? directionRules[context.direction] : 'Choose a genuinely fresh, practical life domain.';
+      const prompt = `You are the GOAL'D IN Discovery Coach. Offer ONE genuinely interesting, SPECIFIC possibility, not a task list or a motivational slogan.
+SELECTED DIRECTION (NON-NEGOTIABLE): ${context.direction ?? 'OPEN DISCOVERY'}. ${directionRule}
+The title, idea, explore action and suggested activity MUST all fit this direction. Never change the type of activity just because the person's interests point elsewhere. Interests are optional inspiration, not instructions to repeat their hobbies. If the person selected GO, the action must be visiting or exploring a place, NOT organizing a car show or any other event. If BUILD, the action must be making or improving something. If LEARN, the primary action must be learning. Give an achievable first action and a sensible equipment-free or low-cost alternative when appropriate.
+Use only the supplied personal context. Completed achievements may INSPIRE an idea but must never be represented as unfinished work. Avoid repeating recent discoveries. Recognize experience only when explicitly supported by supplied context. A named project or goal does NOT establish the person is a beginner, amateur, expert, or only experienced with light tasks. Never invent an assessment of ability. If experience is unknown, describe the creative possibility without evaluating skill level.
+DIVERSITY IS ESSENTIAL: Previous titles and categories are exclusion signals, not prompts to remix. Do not propose another guitar-related, music-related, or workshop-related activity if recent titles already cluster there, even if it is a different object. A new discovery should feel substantially different in subject, setting and action. When direction is provided, use that direction and choose a fresh subject within it. On freshExperience, deliberately explore a different life domain from the recent suggestions. Include practical cooking with a real recipe, learning a useful skill, accessible safe movement, meaningful connection, exploring an unfamiliar place (without claiming local availability), helping others, creative making, and hands-on experiments. Choose one concrete low-friction experience someone can start soon, not an expensive renovation or elaborate event. Keep the user's goals as optional inspiration, not the sole source of topics. Each discovery should be actionable, not merely inspiring. Favor unexpected but grounded CROSS-INTEREST connections that the person may never have considered. Also allow hidden possibilities beyond their current goals; avoid pigeonholing them into familiar topics. A discovery may lead to learning, helping someone, connecting, creating, exploring or a new ambition. It must feel worthwhile even if the person never turns it into a goal. A discovery may be within reach, a stretch, or a bigger possibility; never pretend a stretch is immediately achievable. Make the connection to the person's journey explicit but brief. In the idea field, paint a vivid, tangible picture with sensory or design details specific to the idea, rather than simply suggesting a project. Offer two or three OPTIONAL imaginative variations in possibilities, not a task list. Keep the invitation curious and enjoyable even without a commitment.
+Never invent verified events, people, locations, products, links, scientific facts, credentials, achievements or resources. Do not claim to have searched the web. Do not assert a discovery is locally available. If an external fact would need verification, frame it as something to investigate, not an established opportunity. No personalized medical or dangerous instructions. No harm or serious wrongdoing. No pressure, guilt, fabricated urgency, or obligation to act.
+Return ONLY JSON in exactly this shape:
+{"title":"specific compelling headline","hook":"one inviting sentence","whyYou":"why this fits the supplied journey","idea":"two to three concrete sentences explaining the possibility without unverified claims","explore":"one optional, low-pressure way to learn more","possibilities":["one vivid optional variation","another distinct optional variation"],"readiness":"within_reach|stretch|bigger_possibility","readinessReason":"one short explanation grounded in context","category":"BUILD|GO|LEARN|FIX|PUSH|HELP|CONNECT|MOVE|DO","imageTheme":"restoration|fitness|music|adventure|learning|connection|projects|general"}.
+Avoid generic titles like 'There may be another side to this' or 'Teach someone something'. Make it vivid, personal and plausible. Do not return markdown.`;
+      const parseDiscovery = (raw: any): any => {
+        let value = raw;
+        if (typeof value === 'string') {
+          try { value = JSON.parse(value); } catch { return null; }
+        }
+        return value?.discovery ?? value;
+      };
+      const violatesDirection = (value: any): boolean => {
+        if (!value || typeof value !== 'object') return true;
+        const title = clean(value.title, 130);
+        const idea = clean(value.idea, 700);
+        const explore = clean(value.explore, 240);
+        if (!title || !idea || !explore) return true;
+        const combined = `${title} ${idea} ${explore}`.toLowerCase();
+        if (context.direction === 'GO') {
+          // Catch the observed failure: "organize a community car show" is HELP/BUILD, not GO.
+          if (/\b(?:organize|organise|host|coordinate|plan|arrange|run|launch|set up)\b.{0,55}\b(?:show|event|meetup|festival|gathering|workshop|party|fundraiser)\b/i.test(combined)) return true;
+          if (/\b(?:build|make|craft|cook|design|repair)\b.{0,50}\b(?:at home|in your garage|in your kitchen|your own)\b/i.test(combined)) return true;
+        }
+        return false;
+      };
+      let parsed = parseDiscovery(await dispatchAIRequest(chooseModelRole('COACHING'), prompt, JSON.stringify(context)));
+      if (violatesDirection(parsed)) {
+        // One bounded retry; never present a knowingly mismatched idea as the chosen direction.
+        parsed = parseDiscovery(await dispatchAIRequest(
+          chooseModelRole('COACHING'),
+          `${prompt}\nIMPORTANT REPAIR: The previous answer was missing required fields or did not satisfy the selected direction. Return a DIFFERENT, valid discovery. ${directionRule} Return complete JSON only.`,
+          JSON.stringify({ ...context, rejectedSuggestion: parsed?.title ?? null }),
+        ));
+      }
+      if (violatesDirection(parsed)) {
+        return new Response(JSON.stringify({ error: 'Discovery did not match the chosen direction. Please try again.' }),
+          { status: 422, headers: { 'Content-Type': 'application/json' } });
+      }
+      const title = clean(parsed?.title, 130);
+      const idea = clean(parsed?.idea, 700);
+      if (!title || !idea || !clean(parsed?.explore, 240)) {
+        return new Response(JSON.stringify({error: 'Discovery was not specific enough. Please try again.'}),
+          {status: 422, headers: {'Content-Type': 'application/json'}});
+      }
+      const readiness = ['within_reach', 'stretch', 'bigger_possibility'].includes(parsed?.readiness)
+        ? parsed.readiness : 'bigger_possibility';
+      const category = context.direction ?? (allowed.includes(parsed?.category) ? parsed.category : 'LEARN');
+      const themes = ['restoration', 'fitness', 'music', 'adventure', 'learning', 'connection', 'projects', 'general'];
+      const imageTheme = context.direction === 'GO' ? 'adventure' : themes.includes(parsed?.imageTheme) ? parsed.imageTheme : 'general';
+      const discovery = {
+        title, hook: clean(parsed?.hook, 220), whyYou: clean(parsed?.whyYou, 280),
+        idea, explore: clean(parsed.explore, 240), possibilities: Array.isArray(parsed?.possibilities) ? parsed.possibilities.slice(0, 3).map((v: unknown) => clean(v, 200)).filter(Boolean) : [], readiness,
+        readinessReason: clean(parsed?.readinessReason, 220), category, imageTheme,
+        verification: 'curated_idea',
+      };
+      return new Response(JSON.stringify({discovery}),
+        {status: 200, headers: {'Content-Type': 'application/json'}});
+    }
     if ((input as any)?.mode === 'quick-move') {
       // This is a one-action NOW request, not a program-planning request.
       // No schedule, action, reminder, GPS, or Circle record is changed here.
@@ -415,6 +576,45 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ proposal: cleaned }),
         { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
+    if ((input as any)?.mode === 'continue-milestone') {
+      // A completed Next Move is not necessarily a completed milestone.
+      // This returns one optional draft, NEVER writes to the database.
+      const request = input as any;
+      const goalTitle = String(request.goalTitle ?? '').trim();
+      const milestoneTitle = String(request.currentMilestone ?? '').trim();
+      const milestoneDescription = String(request.milestoneDescription ?? '').trim();
+      const completedMoves = Array.isArray(request.completedMoves)
+        ? request.completedMoves.filter((x: unknown) => typeof x === 'string').slice(-30) : [];
+      const progressEntries = Array.isArray(request.progressEntries) ? request.progressEntries.slice(0, 30) : [];
+      if (!goalTitle || !milestoneTitle) {
+        return new Response(JSON.stringify({error: 'Goal and active milestone required.'}),
+          {status: 400, headers: {'Content-Type': 'application/json'}});
+      }
+      const response: any = await dispatchAIRequest(
+        chooseModelRole('PLANNING'),
+        `You are GOAL'D IN, continuing ONE active, UNFINISHED milestone after the person completed a single Next Move. Return JSON ONLY: {"message":"brief guidance","milestoneReached":false,"proposedMove":{"title":"one concrete action","minutes":null,"steps":["one to four doable steps"]}}. If recorded evidence clearly supports the milestone's real Reached when: criterion, return milestoneReached:true, proposedMove:null and ask the person to REVIEW/CONFIRM the milestone; never automatically complete it. Otherwise suggest ONE next useful action in THIS milestone, taking account of the user's actual schedule and accumulated sessions. Repeated daily sessions are legitimate when training needs repetition: distinguish them with session numbering or a clear purpose; do not call the entire week a single task. Do not jump toward the final goal without evidence, invent accomplishments, add busywork, create reminders, or write to the database. A rest day does not demand another activity. Prioritize current progress over old blockers; for current/uncertain pain do NOT propose running or activity through pain. ${request.routineApproved === true ? 'This person has opted into automatic preparation of routine Next Moves WITHIN their already approved, active milestone. Suggest a safe, straightforward next session only; never advance a milestone, change schedule, start an activity, purchase equipment, make a consequential decision, or bypass unresolved symptoms. Return milestoneReached:true for achievement evidence instead of inventing filler. Anything beyond that scope needs personal review.' : 'The user must approve the action.'} Heart-rate connection and timer/recording start require explicit user action. Return the entire JSON object, not markdown.`,
+        JSON.stringify({goalTitle, currentMilestone: milestoneTitle, milestoneDescription,
+          completedMoves, progressEntries, scheduleSummary: request.scheduleSummary ?? '',
+          userMessage: String(request.userMessage ?? ''), kneeReadiness: request.kneeReadiness ?? null}),
+      );
+      const raw: any = typeof response === 'string' ? (() => {try{return JSON.parse(response);}catch{return null;}})() : response;
+      if (raw?.milestoneReached === true) {
+        return new Response(JSON.stringify({message: String(raw.message ?? 'Review whether this milestone has been reached.'), milestoneReached: true, proposedMove: null}),
+          {status: 200, headers: {'Content-Type': 'application/json'}});
+      }
+      const title = typeof raw?.proposedMove?.title === 'string' ? raw.proposedMove.title.trim().slice(0, 180) : '';
+      const steps = Array.isArray(raw?.proposedMove?.steps) ? raw.proposedMove.steps.filter((x: unknown): x is string => typeof x === 'string' && !!x.trim()).map((x: string) => x.trim().slice(0, 260)).slice(0, 5) : [];
+      const identical = completedMoves.some((x: string) => x.trim().toLowerCase() === title.toLowerCase());
+      const unresolvedConcern = /\b(?:still hurts|still painful|knee still|pain today|current knee pain)\b/i.test(String(request.userMessage ?? ''));
+      if (!title || !steps.length || identical || (unresolvedConcern && /\b(run|jog|sprint)\b/i.test(title))) {
+        return new Response(JSON.stringify({error: 'Coach did not generate a new, safe, actionable move. Review or try again.'}),
+          {status: 422, headers: {'Content-Type': 'application/json'}});
+      }
+      const n = raw.proposedMove.minutes;
+      const minutes = typeof n === 'number' && Number.isFinite(n) && n > 0 && n <= 240 ? Math.round(n) : null;
+      return new Response(JSON.stringify({message: String(raw.message ?? 'Review the next action before saving.').slice(0, 400), milestoneReached: false,
+        proposedMove: {title, steps, minutes}, routineReady: request.routineApproved === true}), {status: 200, headers: {'Content-Type': 'application/json'}});
+    }
     if (input?.mode === 'program-plan') {
       const request = input as ProgramRequest;
       if (!request.goalTitle?.trim() || !request.userMessage?.trim()) {
@@ -449,7 +649,7 @@ Deno.serve(async (req) => {
         try {
           const fix = await dispatchAIRequest(
             chooseModelRole('PLANNING'),
-            `${PROGRAM_PROMPT}\n\nIMPORTANT: Repair the previous draft's Next Move quality problems. Make each move ONE real, doable session/action with concrete steps. Return the full JSON proposal again.`,
+            `${PROGRAM_PROMPT}\n\nIMPORTANT: Repair the previous draft's Next Move quality problems. Make milestone titles real achievements earned over many sessions, include Reached when: criteria, model the complete endurance progression before a conditional finish line, and keep each Next Move ONE real session. Return the full JSON proposal again.`,
             JSON.stringify({
               goalTitle: request.goalTitle,
               userRequest: request.userMessage,
@@ -471,6 +671,7 @@ Deno.serve(async (req) => {
       // Reject remaining multi-week moves; let the user retry instead of
       // misleading them into approving a phase as one checklist item.
       if (program && programQualityIssues(program, request.goalKind, request.goalTitle, request.kneeReadiness).length) {
+        console.warn('GOALD PROGRAM QUALITY ISSUES:', programQualityIssues(program, request.goalKind, request.goalTitle, request.kneeReadiness));
         return new Response(JSON.stringify({ error: 'The Coach grouped multiple sessions into a single Next Move. Please retry to get one action per session.' }),
           { status: 422, headers: { 'Content-Type': 'application/json' } });
       }
@@ -490,7 +691,7 @@ SAFETY
 GOAL’D IN must never create, encourage, optimize, or provide actionable steps for a goal whose purpose involves:
 
 - suicide, self-harm, or intentionally injuring oneself
-- harming, killing, threatening, stalking, abusing, or coercing another person
+- harming, killing, threatening, stalking, abusing, or coercing another person through any means
 - planning violence or facilitating serious wrongdoing
 - dangerous behavior where the user's stated objective is to cause injury or harm
 
