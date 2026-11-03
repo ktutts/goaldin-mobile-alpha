@@ -1,95 +1,97 @@
 {
-  "expo": {
-    "name": "GOAL'D IN",
-    "slug": "ktutts",
-    "version": "0.1.0",
-    "orientation": "portrait",
-    "scheme": "goaldin",
-    "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
-    "icon": "./assets/images/goaldin-crown.png",
-    "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.mygoaldin.app",
-      "infoPlist": {
-        "NSSpeechRecognitionUsageDescription": "Allow $(PRODUCT_NAME) to use speech recognition.",
-        "NSMicrophoneUsageDescription": "Allow $(PRODUCT_NAME) to use the microphone.",
-        "ITSAppUsesNonExemptEncryption": false
-      }
-    },
-    "android": {
-      "package": "com.mygoaldin.app",
-      "versionCode": 3,
-      "permissions": [
-        "android.permission.SCHEDULE_EXACT_ALARM",
-        "android.permission.health.READ_SLEEP",
-        "android.permission.health.READ_RESTING_HEART_RATE",
-        "android.permission.health.READ_HEART_RATE_VARIABILITY",
-        "android.permission.MODIFY_AUDIO_SETTINGS",
-        "android.permission.BLUETOOTH",
-        "android.permission.BLUETOOTH_ADMIN",
-        "android.permission.BLUETOOTH_CONNECT"
-      ],
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/images/goaldin-crown.png",
-        "backgroundColor": "#090909"
-      }
-    },
-    "plugins": [
-      "expo-router",
-      "expo-font",
-      "@react-native-community/datetimepicker",
-      "expo-speech-recognition",
-      "expo-audio",
-      [
-        "react-native-audio-api",
-        {
-          "iosMicrophonePermission": "Allow GOAL'D IN to listen to an instrument while you use the tuner.",
-          "androidPermissions": [
-            "android.permission.RECORD_AUDIO"
-          ],
-          "androidForegroundService": false
-        }
-      ],
-      "expo-asset",
-      "react-native-ble-plx",
-      "react-native-health-connect",
-      [
-        "expo-build-properties",
-        {
-          "android": {
-            "compileSdkVersion": 36,
-            "targetSdkVersion": 36,
-            "minSdkVersion": 26
-          }
-        }
-      ],
-      [
-        "expo-image-picker",
-        {
-          "cameraPermission": "Allow GOAL'D IN to capture photos you choose for your progress and YOU page.",
-          "photosPermission": "Allow GOAL'D IN to select a photo for your YOU page or private progress records.",
-          "microphonePermission": false
-        }
-      ],
-      [
-        "@kingstinct/react-native-healthkit",
-        {
-          "NSHealthShareUsageDescription": "GOAL'D IN reads sleep, resting heart rate and heart-rate variability only when you choose, to provide personal activity context. We do not upload these readings or share them with other users.",
-          "NSHealthUpdateUsageDescription": false,
-          "background": false
-        }
-      ]
-    ],
-    "experiments": {
-      "typedRoutes": true
-    },
-    "extra": {
-      "router": {},
-      "eas": {
-        "projectId": "c83115ce-eee9-4a35-a849-9d9b6b9d3f8c"
-      }
-    },
-    "owner": "ktutts-team"
-  }
+    "expo":  {
+                 "name":  "GOAL\u0027D IN",
+                 "slug":  "ktutts",
+                 "version":  "0.1.0",
+                 "orientation":  "portrait",
+                 "scheme":  "goaldin",
+                 "userInterfaceStyle":  "dark",
+                 "newArchEnabled":  true,
+                 "icon":  "./assets/images/goaldin-crown.png",
+                 "ios":  {
+                             "supportsTablet":  true,
+                             "bundleIdentifier":  "com.mygoaldin.app",
+                             "infoPlist":  {
+                                               "NSSpeechRecognitionUsageDescription":  "Allow $(PRODUCT_NAME) to use speech recognition.",
+                                               "NSMicrophoneUsageDescription":  "Allow $(PRODUCT_NAME) to use the microphone.",
+                                               "ITSAppUsesNonExemptEncryption":  false
+                                           }
+                         },
+                 "android":  {
+                                 "package":  "com.mygoaldin.app",
+                                 "versionCode":  4,
+                                 "permissions":  [
+                                                     "android.permission.SCHEDULE_EXACT_ALARM",
+                                                     "android.permission.health.READ_SLEEP",
+                                                     "android.permission.health.READ_RESTING_HEART_RATE",
+                                                     "android.permission.health.READ_HEART_RATE_VARIABILITY",
+                                                     "android.permission.MODIFY_AUDIO_SETTINGS",
+                                                     "android.permission.BLUETOOTH",
+                                                     "android.permission.BLUETOOTH_ADMIN",
+                                                     "android.permission.BLUETOOTH_CONNECT"
+                                                 ],
+                                 "adaptiveIcon":  {
+                                                      "foregroundImage":  "./assets/images/goaldin-crown.png",
+                                                      "backgroundColor":  "#090909"
+                                                  }
+                             },
+                 "plugins":  [
+                                 "expo-router",
+                                 "expo-font",
+                                 "@react-native-community/datetimepicker",
+                                 "expo-speech-recognition",
+                                 "expo-audio",
+                                 [
+                                     "react-native-audio-api",
+                                     {
+                                         "iosMicrophonePermission":  "Allow GOAL\u0027D IN to listen to an instrument while you use the tuner.",
+                                         "androidPermissions":  [
+                                                                    "android.permission.RECORD_AUDIO"
+                                                                ],
+                                         "androidForegroundService":  false
+                                     }
+                                 ],
+                                 "expo-asset",
+                                 "react-native-ble-plx",
+                                 "react-native-health-connect",
+                                 [
+                                     "expo-build-properties",
+                                     {
+                                         "android":  {
+                                                         "compileSdkVersion":  36,
+                                                         "targetSdkVersion":  36,
+                                                         "minSdkVersion":  26
+                                                     }
+                                     }
+                                 ],
+                                 [
+                                     "expo-image-picker",
+                                     {
+                                         "cameraPermission":  "Allow GOAL\u0027D IN to capture photos you choose for your progress and YOU page.",
+                                         "photosPermission":  "Allow GOAL\u0027D IN to select a photo for your YOU page or private progress records.",
+                                         "microphonePermission":  false
+                                     }
+                                 ],
+                                 [
+                                     "@kingstinct/react-native-healthkit",
+                                     {
+                                         "NSHealthShareUsageDescription":  "GOAL\u0027D IN reads sleep, resting heart rate and heart-rate variability only when you choose, to provide personal activity context. We do not upload these readings or share them with other users.",
+                                         "NSHealthUpdateUsageDescription":  false,
+                                         "background":  false
+                                     }
+                                 ]
+                             ],
+                 "experiments":  {
+                                     "typedRoutes":  true
+                                 },
+                 "extra":  {
+                               "router":  {
+
+                                          },
+                               "eas":  {
+                                           "projectId":  "c83115ce-eee9-4a35-a849-9d9b6b9d3f8c"
+                                       }
+                           },
+                 "owner":  "ktutts-team"
+             }
 }
